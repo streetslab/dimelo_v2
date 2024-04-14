@@ -56,18 +56,18 @@ This README document contains installation instructions and documentation for va
 
 ### Load source code from the modkit_parsing_beta branch
 
-Open your terminal or command line and navigate to wherever you want to keep the `dimelo` source code (e.g. your Documents folder, `cd Documents`) and clone the repo
+Open your terminal or command line and navigate to wherever you want to keep the `dimelo_v2` source code (e.g. your Documents folder, `cd Documents`) and clone the repo
 
 ```
-git clone -b modkit_parsing_beta https://github.com/streetslab/dimelo
+git clone https://github.com/streetslab/dimelo_v2
 ```
 
 ### Set up virtual environment
 
-Navigate into the dimelo directory
+Navigate into the dimelo_v2 directory
 
 ```
-cd dimelo
+cd dimelo_v2
 ```
 
 Create a conda environment using environment.yml. This will make a new conda environment with the name `dimelo_modkit_parsing`. 
@@ -86,7 +86,7 @@ Activate your conda environment, which should now contain python 3.11 and a modk
 conda activate dimelo_modkit_parsing
 ```
 
-Ensure that you are still in the top-level dimelo directory. Install the dimelo package and its dependencies from source.
+Ensure that you are still in the top-level dimelo_v2 directory. Install the dimelo package and its dependencies from source.
 
 ```
 pip install .
@@ -103,8 +103,8 @@ drive.mount('/content/drive')
 import condacolab
 condacolab.install()
 !conda install nanoporetech::modkit==0.2.4
-!git clone -b modkit_parsing_beta https://github.com/streetslab/dimelo
-!cd dimelo && pip install ipywidgets==7.7.1 .
+!git clone https://github.com/streetslab/dimelo_v2
+!cd dimelo_v2 && pip install ipywidgets==7.7.1 .
 import dimelo
 ```
 
