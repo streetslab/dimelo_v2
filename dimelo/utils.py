@@ -14,7 +14,10 @@ BASEMOD_NAMES_DICT = {
 
 DEFAULT_COLORS = {
     "A,0": "blue",
+    "A,0,a": "blue",
     "CG,0": "orange",
+    "CG,0,m": "yellow",
+    "CG,0,h": "red",
     "GCH,1": "purple",
 }
 

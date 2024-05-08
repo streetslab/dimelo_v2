@@ -475,6 +475,7 @@ def extract(
         )
 
         # TODO: Do we need to store and use the output from this method? Previously was being printed immediately afterward.
+        # This is something the user might want to see - it's the end-of-process message for modkit, says e.g. how many reads were processed and stuff
         _ = run_modkit.run_with_progress_bars(
             command_list=extract_command_list,
             input_file=input_file,
@@ -552,9 +553,16 @@ def check_bam_format(
 
     """
     basemods_found_dict = {}
+    mod_codes_dict = {}
     for basemod in basemods:
-        motif, pos = basemod.split(",")
+        motif_details = basemod.split(",")
+        motif = motif_details[0]
+        pos = motif_details[1]
         base = motif[int(pos)]
+        if len(motif_details) > 2:
+            mod_codes_dict[base] = set(motif_details[2])
+        else:
+            mod_codes_dict[base] = utils.BASEMOD_NAMES_DICT[base]
         basemods_found_dict[base] = False
 
     input_bam = pysam.AlignmentFile(bam_file)
@@ -582,11 +590,15 @@ def check_bam_format(
                         )
                     else:
                         if len(tag_value) > 0 and tag_value[0] in basemods_found_dict:
-                            if tag_value[2] in utils.BASEMOD_NAMES_DICT[tag_value[0]]:
+                            correct_mod_codes = mod_codes_dict[tag_value[0]]
+                            valid_mod_codes = mod_codes_dict[tag_value[0]].union(
+                                utils.BASEMOD_NAMES_DICT[tag_value[0]]
+                            )
+                            if tag_value[2] in correct_mod_codes:
                                 basemods_found_dict[tag_value[0]] = True
-                            else:
+                            elif tag_value[2] not in valid_mod_codes:
                                 raise ValueError(
-                                    f'Base modification name unexpected: {tag_value[2]} to modify {tag_value[0]}, should be in set {utils.BASEMOD_NAMES_DICT[tag_value[0]]}. \n\nIf you know what your mod names correspond to in terms of the latest .bam standard, consider using "modkit adjust-mods {str(bam_file)} new_file.bam --convert 5mC_name m --convert N6mA_name a --convert other_basemod_name correct_label" and then trying with the new file. Note: currently supported mod names are {utils.BASEMOD_NAMES_DICT}'
+                                    f'Base modification name unexpected: {tag_value[2]} to modify {tag_value[0]}, should be in set {valid_mod_codes}. \n\nIf you know what your mod names correspond to in terms of the latest .bam standard, consider using "modkit adjust-mods {str(bam_file)} new_file.bam --convert 5mC_name m --convert N6mA_name a --convert other_basemod_name correct_label" and then trying with the new file. Note: currently supported mod names are {utils.BASEMOD_NAMES_DICT}'
                                 )
             if all(basemods_found_dict.values()):
                 return
@@ -717,8 +729,16 @@ def read_by_base_txt_to_hdf5(
     """
     input_txt, output_h5 = sanitize_path_args(input_txt, output_h5)
 
-    motif, modco = tuple(basemod.split(","))
+    motif_details = basemod.split(",")
+    motif = motif_details[0]
+    modco = motif_details[1]
     motif_modified_base = motif[int(modco)]
+    if len(motif_details) > 2:
+        # if your motif contains a mod name specification, that will get sent to the h5 constructor
+        mod_code_options = set(motif_details[2])
+    else:
+        # if your motif does not contain a mod name specification, the default list for that base will get sent
+        mod_code_options = utils.BASEMOD_NAMES_DICT[motif_modified_base]
     read_name = ""
     num_reads = 0
     # TODO: I think the function calls can be consolidated; lots of repetition
@@ -898,6 +918,7 @@ def read_by_base_txt_to_hdf5(
                 pos_in_genome = int(fields[2])
                 canonical_base = fields[15]
                 prob = float(fields[10])
+                mod_code = fields[11]
 
                 if read_name != fields[0]:
                     # Record the read details unless this is the first read
@@ -974,7 +995,10 @@ def read_by_base_txt_to_hdf5(
                 # Regardless of whether its a new read or not,
                 # add modification to vector if motif type is correct
                 # for the motif in question
-                if canonical_base == motif_modified_base:
+                if (
+                    canonical_base == motif_modified_base
+                    and mod_code in mod_code_options
+                ):
                     val_coordinates_list.append(pos_in_genome - read_start)
                     if thresh is None:
                         mod_values_list.append(prob)
