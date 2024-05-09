@@ -34,13 +34,17 @@ def pileup_counts_from_bedmethyl(
     valid_base_count = 0
     modified_base_count = 0
 
-    motif_details = motif.split(",")
-    mod_motif = motif_details[0]
-    mod_coord_in_motif = motif_details[1]
-    if len(motif_details) > 2:
-        mod_codes = set(motif_details[2])
-    else:
-        mod_codes = utils.BASEMOD_NAMES_DICT[mod_motif[int(mod_coord_in_motif)]]
+    parsed_motif = utils.ParsedMotif(motif)
+    if parsed_motif.warning:
+        print(parsed_motif.warning)
+
+    # motif_details = motif.split(",")
+    # mod_motif = motif_details[0]
+    # mod_coord_in_motif = motif_details[1]
+    # if len(motif_details) > 2:
+    #     mod_codes = set(motif_details[2])
+    # else:
+    #     mod_codes = utils.BASEMOD_NAMES_DICT[mod_motif[int(mod_coord_in_motif)]]
 
     if regions is not None:
         # Get counts from the specified regions
@@ -57,13 +61,13 @@ def pileup_counts_from_bedmethyl(
                                 pileup_basemod.split(",")
                             )
                             if (
-                                pileup_motif == mod_motif
-                                and pileup_mod_coord == mod_coord_in_motif
-                                and pileup_modname in mod_codes
+                                pileup_motif == parsed_motif.motif_seq
+                                and int(pileup_mod_coord) == parsed_motif.modified_pos
+                                and pileup_modname in parsed_motif.mod_codes
                             ):
                                 keep_basemod = True
                         elif len(pileup_basemod.split(",")) == 1:
-                            if pileup_basemod in mod_codes:
+                            if pileup_basemod in parsed_motif.mod_codes:
                                 keep_basemod = True
                         else:
                             raise ValueError(
@@ -84,13 +88,13 @@ def pileup_counts_from_bedmethyl(
                     ","
                 )
                 if (
-                    pileup_motif == mod_motif
-                    and pileup_mod_coord == mod_coord_in_motif
-                    and pileup_modname in mod_codes
+                    pileup_motif == parsed_motif.motif_seq
+                    and int(pileup_mod_coord) == parsed_motif.modified_pos
+                    and pileup_modname in parsed_motif.mod_codes
                 ):
                     keep_basemod = True
             elif len(pileup_basemod.split(",")) == 1:
-                if pileup_basemod in mod_codes:
+                if pileup_basemod in parsed_motif.mod_codes:
                     keep_basemod = True
             else:
                 raise ValueError(
@@ -143,13 +147,17 @@ def pileup_vectors_from_bedmethyl(
 
     source_tabix = pysam.TabixFile(str(bedmethyl_file))
 
-    motif_details = motif.split(",")
-    mod_motif = motif_details[0]
-    mod_coord_in_motif = motif_details[1]
-    if len(motif_details) > 2:
-        mod_codes = set(motif_details[2])
-    else:
-        mod_codes = utils.BASEMOD_NAMES_DICT[mod_motif[int(mod_coord_in_motif)]]
+    parsed_motif = utils.ParsedMotif(motif)
+    if parsed_motif.warning:
+        print(parsed_motif.warning)
+
+    # motif_details = motif.split(",")
+    # mod_motif = motif_details[0]
+    # mod_coord_in_motif = motif_details[1]
+    # if len(motif_details) > 2:
+    #     mod_codes = set(motif_details[2])
+    # else:
+    #     mod_codes = utils.BASEMOD_NAMES_DICT[mod_motif[int(mod_coord_in_motif)]]
 
     regions_dict = utils.regions_dict_from_input(regions, window_size)
 
@@ -173,13 +181,13 @@ def pileup_vectors_from_bedmethyl(
                             pileup_basemod.split(",")
                         )
                         if (
-                            pileup_motif == mod_motif
-                            and pileup_mod_coord == mod_coord_in_motif
-                            and pileup_modname in mod_codes
+                            pileup_motif == parsed_motif.motif_seq
+                            and int(pileup_mod_coord) == parsed_motif.modified_pos
+                            and pileup_modname in parsed_motif.mod_codes
                         ):
                             keep_basemod = True
                     elif len(pileup_basemod.split(",")) == 1:
-                        if pileup_basemod in mod_codes:
+                        if pileup_basemod in parsed_motif.mod_codes:
                             keep_basemod = True
                     else:
                         raise ValueError(

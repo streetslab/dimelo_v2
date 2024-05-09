@@ -185,12 +185,23 @@ def pileup(
 
     motif_command_list = []
     if len(motifs) > 0:
-        for basemod in motifs:
-            # TODO: Can be split out to method; same functionality as in extract
-            motif_details = basemod.split(",")
-            motif_command_list.append("--motif")
-            motif_command_list.append(motif_details[0])
-            motif_command_list.append(motif_details[1])
+        for motif in motifs:
+            parsed_motif = utils.ParsedMotif(motif)
+            if parsed_motif.warning:
+                print(parsed_motif.warning)
+            motif_command_present = False
+            for a, b in zip(motif_command_list, motif_command_list[1:]):
+                if a == parsed_motif.motif_seq and b == str(parsed_motif.modified_pos):
+                    # This motif is already going to be processed; we want to skip adding it a second
+                    # time because modkit does not like duplicate motifs.
+                    # It's actually ok if it's a different mod code in the two cases because the pileup
+                    # operation, under the hood, keeps all mod codes. Filtering is only done when loading.
+                    motif_command_present = True
+                    break
+            if not motif_command_present:
+                motif_command_list.append("--motif")
+                motif_command_list.append(parsed_motif.motif_seq)
+                motif_command_list.append(str(parsed_motif.modified_pos))
     else:
         raise ValueError("Error: no motifs specified. Nothing to process.")
 
@@ -227,17 +238,18 @@ def pileup(
             print(
                 "No base modification threshold provided. Using adaptive threshold selection via modkit."
             )
-    elif thresh <= 0:
-        raise ValueError(
-            f"Threshold {thresh} cannot be used for pileup, please pick a positive nonzero value."
-        )
     else:
         adjusted_threshold = utils.adjust_threshold(thresh, quiet=quiet)
-        for modnames_set in utils.BASEMOD_NAMES_DICT.values():
-            for modname in modnames_set:
+        if adjusted_threshold < 0.5 and not quiet:
+            print(
+                f"WARNING: thresh {thresh} is very low and may lead to unexpected behavior. Typical thresholds are at least 0.5 or 128."
+            )
+        for motif in motifs:
+            parsed_motif = utils.ParsedMotif(motif)
+            for mod_code in parsed_motif.mod_codes:
                 mod_thresh_list = mod_thresh_list + [
                     "--mod-thresholds",
-                    f"{modname}:{adjusted_threshold}",
+                    f"{mod_code}:{adjusted_threshold}",
                 ]
 
     pileup_command_list = (
@@ -425,19 +437,18 @@ def extract(
                 "No valid base modification threshold provided. Raw probs will be saved."
             )
         adjusted_threshold = None
-    elif thresh <= 0:
-        if not quiet:
-            print(
-                f"With a thresh of {thresh}, modkit will simply save all tagged modifications."
-            )
-        adjusted_threshold = 0
     else:
         adjusted_threshold = utils.adjust_threshold(thresh, quiet=quiet)
-        for modnames_set in utils.BASEMOD_NAMES_DICT.values():
-            for modname in modnames_set:
+        if adjusted_threshold < 0.5 and not quiet:
+            print(
+                f"WARNING: thresh {thresh} is very low and may lead to unexpected behavior. Typical thresholds are at least 0.5 or 128."
+            )
+        for motif in motifs:
+            parsed_motif = utils.ParsedMotif(motif)
+            for mod_code in parsed_motif.mod_codes:
                 mod_thresh_list = mod_thresh_list + [
                     "--mod-thresholds",
-                    f"{modname}:{adjusted_threshold}",
+                    f"{mod_code}:{adjusted_threshold}",
                 ]
 
     if log:
@@ -447,15 +458,15 @@ def extract(
     else:
         log_command = []
 
-    for basemod in motifs:
+    for motif in motifs:
         # print(f'Extracting {basemod} sites')
         motif_command_list = []
-        motif_details = basemod.split(",")
+        parsed_motif = utils.ParsedMotif(motif)
         motif_command_list.append("--motif")
-        motif_command_list.append(motif_details[0])
-        motif_command_list.append(motif_details[1])
+        motif_command_list.append(parsed_motif.motif_seq)
+        motif_command_list.append(str(parsed_motif.modified_pos))
 
-        output_txt = Path(output_path) / (f"reads.{basemod}.txt")
+        output_txt = Path(output_path) / (f"reads.{motif}.txt")
 
         if os.path.exists(output_txt):
             os.remove(output_txt)
@@ -480,7 +491,7 @@ def extract(
             command_list=extract_command_list,
             input_file=input_file,
             ref_genome=ref_genome,
-            motifs=[basemod],
+            motifs=[motif],
             load_fasta_regex=r"\s+\[.*?\]\s+(\d+)\s+parsing FASTA",
             find_motifs_regex=r"\s+(\d+)/(\d+)\s+([\w]+)\s+searched",
             contigs_progress_regex=r"\s+(\d+)/(\d+)\s+contigs\s+[^s]",
@@ -498,7 +509,7 @@ def extract(
         read_by_base_txt_to_hdf5(
             output_txt,
             output_h5,
-            basemod,
+            motif,
             adjusted_threshold,
             quiet=quiet,
         )
@@ -539,7 +550,7 @@ def verify_inputs(
 
 def check_bam_format(
     bam_file: str | Path,
-    basemods: list = ["A,0", "CG,0"],
+    motifs: list = ["A,0", "CG,0"],
 ):
     """
     Check whether a .bam file is formatted appropriately for modkit
@@ -555,16 +566,10 @@ def check_bam_format(
     basemods_found_dict = {}
     mod_codes_dict = {}
     mod_codes_found_dict = defaultdict(set)
-    for basemod in basemods:
-        motif_details = basemod.split(",")
-        motif = motif_details[0]
-        pos = motif_details[1]
-        base = motif[int(pos)]
-        if len(motif_details) > 2:
-            mod_codes_dict[base] = set(motif_details[2])
-        else:
-            mod_codes_dict[base] = utils.BASEMOD_NAMES_DICT[base]
-        basemods_found_dict[base] = False
+    for motif in motifs:
+        parsed_motif = utils.ParsedMotif(motif)
+        mod_codes_dict[parsed_motif.modified_base] = parsed_motif.mod_codes
+        basemods_found_dict[parsed_motif.modified_base] = False
 
     input_bam = pysam.AlignmentFile(bam_file)
 
@@ -624,7 +629,7 @@ def check_bam_format(
                 print(
                     f"""
 WARNING: no modified appropriately-coded values found for {missing_bases} in the first {counter} reads. 
-Do you expect this file to contain these modifications? parse_bam is looking for {basemods} but for {missing_bases} found only found {[f'{base}+{mod_codes}' for base, mod_codes in mod_codes_found_dict.items()]}.
+Do you expect this file to contain these modifications? parse_bam is looking for {motifs} but for {missing_bases} found only found {[f'{base}+{mod_codes}' for base, mod_codes in mod_codes_found_dict.items()]}.
 
 Consider passing only the motifs and mod codes (e.g. m,h,a) that you expect to be present in your file. 
 You can use modkit adjust-mods --convert <CONVERT> <CONVERT> [OPTIONS] <IN_BAM> <OUT_BAM> to update or consolidate mod codes.
@@ -709,7 +714,7 @@ def create_region_specifier(
 def read_by_base_txt_to_hdf5(
     input_txt: str | Path,
     output_h5: str | Path,
-    basemod: str,
+    motif: str,
     thresh: float | None = None,
     quiet: bool = False,
     compress_level: int = 1,
@@ -750,16 +755,8 @@ def read_by_base_txt_to_hdf5(
     """
     input_txt, output_h5 = sanitize_path_args(input_txt, output_h5)
 
-    motif_details = basemod.split(",")
-    motif = motif_details[0]
-    modco = motif_details[1]
-    motif_modified_base = motif[int(modco)]
-    if len(motif_details) > 2:
-        # if your motif contains a mod name specification, that will get sent to the h5 constructor
-        mod_code_options = set(motif_details[2])
-    else:
-        # if your motif does not contain a mod name specification, the default list for that base will get sent
-        mod_code_options = utils.BASEMOD_NAMES_DICT[motif_modified_base]
+    parsed_motif = utils.ParsedMotif(motif)
+
     read_name = ""
     num_reads = 0
     # TODO: I think the function calls can be consolidated; lots of repetition
@@ -968,7 +965,7 @@ def read_by_base_txt_to_hdf5(
                         read_dict_of_lists["read_start"].append(read_start)
                         read_dict_of_lists["read_end"].append(read_end)
                         read_dict_of_lists["strand"].append(ref_strand)
-                        read_dict_of_lists["motif"].append(basemod)
+                        read_dict_of_lists["motif"].append(motif)
                         read_dict_of_lists["mod_vector"].append(
                             np.frombuffer(
                                 gzip.compress(
@@ -1017,8 +1014,8 @@ def read_by_base_txt_to_hdf5(
                 # add modification to vector if motif type is correct
                 # for the motif in question
                 if (
-                    canonical_base == motif_modified_base
-                    and mod_code in mod_code_options
+                    canonical_base == parsed_motif.modified_base
+                    and mod_code in parsed_motif.mod_codes
                 ):
                     val_coordinates_list.append(pos_in_genome - read_start)
                     if thresh is None:
@@ -1056,7 +1053,7 @@ def read_by_base_txt_to_hdf5(
                 read_dict_of_lists["read_start"].append(read_start)
                 read_dict_of_lists["read_end"].append(read_end)
                 read_dict_of_lists["strand"].append(ref_strand)
-                read_dict_of_lists["motif"].append(basemod)
+                read_dict_of_lists["motif"].append(motif)
                 read_dict_of_lists["mod_vector"].append(
                     np.frombuffer(
                         gzip.compress(

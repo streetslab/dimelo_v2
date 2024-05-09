@@ -7,19 +7,57 @@ import seaborn as sns
 from matplotlib.axes import Axes
 
 # This provides the mapping of canonical bases to sets of valid mode names
-BASEMOD_NAMES_DICT = {
-    "A": {"a", "Y"},
-    "C": {"m", "Z"},
-}
+BASEMOD_NAMES_DICT = defaultdict(lambda: set())
+BASEMOD_NAMES_DICT.update(
+    {
+        "A": {"a", "Y"},
+        "C": {"m", "Z"},
+    }
+)
 
-DEFAULT_COLORS = {
-    "A,0": "blue",
-    "A,0,a": "blue",
-    "CG,0": "orange",
-    "CG,0,m": "yellow",
-    "CG,0,h": "red",
-    "GCH,1": "purple",
-}
+DEFAULT_COLORS = defaultdict(lambda: "grey")
+DEFAULT_COLORS.update(
+    {
+        "A,0": "blue",
+        "A,0,a": "blue",
+        "CG,0": "orange",
+        "CG,0,m": "yellow",
+        "CG,0,h": "red",
+        "GCH,1": "purple",
+    }
+)
+
+
+class ParsedMotif:
+    def __init__(self, motif_string):
+        parts = motif_string.split(",")
+        if len(parts) == 2:
+            # If a mod code isn't specified, we use the default set
+            self.motif_seq = parts[0]
+            self.modified_pos = int(parts[1])
+            if self.modified_pos >= len(self.motif_seq):
+                raise ValueError(f"Motif {motif_string} has an out-of-range mod index.")
+            self.modified_base = self.motif_seq[self.modified_pos]
+            self.mod_codes = BASEMOD_NAMES_DICT[self.modified_base]
+            self.warning = f"""
+WARNING: {motif_string} does not specify mod code.
+Defaulting to {self.mod_codes}.
+Processing assumes at most one of {self.mod_codes} is present in your data.
+                            """
+        elif len(parts) == 3:
+            # If a mod code is specified, that will be the only one we look for
+            self.motif_seq = parts[0]
+            self.modified_pos = int(parts[1])
+            if self.modified_pos >= len(self.motif_seq):
+                raise ValueError(f"Motif {motif_string} has an out-of-range mod index.")
+            self.modified_base = self.motif_seq[self.modified_pos]
+            self.mod_codes = set(parts[2])
+            self.warning = None
+        else:
+            # Motifs need both a sequence and an index, separated by a comma
+            raise ValueError(
+                f"Motif {motif_string} must have 2 or 3 comma-separated elements: sequence, index, and (optionally) mod code."
+            )
 
 
 def adjust_threshold(
