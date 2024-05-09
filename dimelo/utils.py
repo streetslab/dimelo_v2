@@ -8,8 +8,8 @@ from matplotlib.axes import Axes
 
 # This provides the mapping of canonical bases to sets of valid mode names
 BASEMOD_NAMES_DICT = {
-    "A": {"A", "a", "Y"},
-    "C": {"m", "h", "Z"},
+    "A": {"a", "Y"},
+    "C": {"m", "Z"},
 }
 
 DEFAULT_COLORS = {

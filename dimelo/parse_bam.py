@@ -554,6 +554,7 @@ def check_bam_format(
     """
     basemods_found_dict = {}
     mod_codes_dict = {}
+    mod_codes_found_dict = defaultdict(set)
     for basemod in basemods:
         motif_details = basemod.split(",")
         motif = motif_details[0]
@@ -571,35 +572,48 @@ def check_bam_format(
         for counter, read in enumerate(input_bam.fetch()):
             read_dict = read.to_dict()
             for tag_string in read_dict["tags"]:
-                tag_fields = tag_string.split(",")[0].split(":")
-                tag = tag_fields[0]
-                # tag_type = tag_fields[1]
-                tag_value = tag_fields[2]
+                tag = tag_string.split(",")[0].split(":")[0]
                 if tag == "Mm" or tag == "Ml":
                     raise ValueError(
                         f'Base modification tags are out of spec (Mm and Ml instead of MM and ML). \n\nConsider using "modkit update-tags {str(bam_file)} new_file.bam" in the command line with your conda environment active and then trying with the new file. For megalodon basecalling/modcalling, you may also need to pass "--mode ambiguous.\nBe sure to index the resulting .bam file."'
                     )
                 elif tag == "MM":
-                    if (
-                        len(tag_value) > 0
-                        and tag_value[-1] != "?"
-                        and tag_value[-1] != "."
-                    ):
-                        raise ValueError(
-                            f'Base modification tags are out of spec. Need ? or . in TAG:TYPE:VALUE for MM tag, else modified probability is considered to be implicit. \n\nConsider using "modkit update-tags {str(bam_file)} new_file.bam --mode ambiguous" in the command line with your conda environment active and then trying with the new file.'
-                        )
-                    else:
-                        if len(tag_value) > 0 and tag_value[0] in basemods_found_dict:
-                            correct_mod_codes = mod_codes_dict[tag_value[0]]
-                            valid_mod_codes = mod_codes_dict[tag_value[0]].union(
-                                utils.BASEMOD_NAMES_DICT[tag_value[0]]
+                    for tag_substring in tag_string.split(";"):
+                        tag_fields = tag_substring.split(",")[0].split(":")
+                        if len(tag_fields) >= 3:
+                            tag_value = tag_fields[2]
+                        else:
+                            tag_value = tag_fields[0]
+                        if (
+                            len(tag_value) > 0
+                            and tag_value[-1] != "?"
+                            and tag_value[-1] != "."
+                        ):
+                            raise ValueError(
+                                f'Base modification tags are out of spec. Need ? or . in TAG:TYPE:VALUE for MM tag, else modified probability is considered to be implicit. \n\nConsider using "modkit update-tags {str(bam_file)} new_file.bam --mode ambiguous" in the command line with your conda environment active and then trying with the new file.'
                             )
-                            if tag_value[2] in correct_mod_codes:
-                                basemods_found_dict[tag_value[0]] = True
-                            elif tag_value[2] not in valid_mod_codes:
-                                raise ValueError(
-                                    f'Base modification name unexpected: {tag_value[2]} to modify {tag_value[0]}, should be in set {valid_mod_codes}. \n\nIf you know what your mod names correspond to in terms of the latest .bam standard, consider using "modkit adjust-mods {str(bam_file)} new_file.bam --convert 5mC_name m --convert N6mA_name a --convert other_basemod_name correct_label" and then trying with the new file. Note: currently supported mod names are {utils.BASEMOD_NAMES_DICT}'
-                                )
+                        else:
+                            if (
+                                len(tag_value) > 0
+                                and tag_value[0] in basemods_found_dict
+                            ):
+                                correct_mod_codes = mod_codes_dict[tag_value[0]]
+                                # valid_mod_codes = mod_codes_dict[tag_value[0]].union(
+                                #     utils.BASEMOD_NAMES_DICT[tag_value[0]]
+                                # )
+                                if tag_value[2] in correct_mod_codes:
+                                    basemods_found_dict[tag_value[0]] = True
+                                else:
+                                    mod_codes_found_dict[tag_value[0]].add(tag_value[2])
+                                # With the mode-code-aware motifs, it no longer makes sense to throw this error
+                                # This is because the warning the user gets if their mod code isn't found, or (if none is specified)
+                                # the default mod codes aren't found, can tell them what mod codes *were* found and they can add them
+                                # to their motif or use adjust_mods according to what makes sense. Thus, unexpected codes are not a
+                                # problem (in part this is because parse_bam will now set thresholds for the motif-specified OR default mod codes)
+                                # elif tag_value[2] not in valid_mod_codes:
+                                #     raise ValueError(
+                                #         f'Base modification name unexpected: {tag_value[2]} to modify {tag_value[0]}, should be in set {valid_mod_codes}. \n\nIf you know what your mod names correspond to in terms of the latest .bam standard, consider using "modkit adjust-mods {str(bam_file)} new_file.bam --convert 5mC_name m --convert N6mA_name a --convert other_basemod_name correct_label" and then trying with the new file. Note: currently supported mod names are {utils.BASEMOD_NAMES_DICT}'
+                                #     )
             if all(basemods_found_dict.values()):
                 return
             if counter >= NUM_READS_TO_CHECK:
@@ -608,7 +622,14 @@ def check_bam_format(
                     if not found:
                         missing_bases.append(base)
                 print(
-                    f"WARNING: no modified values found for {missing_bases} in the first {counter} reads. Do you expect this file to contain these modifications? parse_bam is looking for {basemods} but only found modifications on {[base for base, found in basemods_found_dict.items() if found]}. \n\nConsider passing only the basemods that you expect to be present in your file."
+                    f"""
+WARNING: no modified appropriately-coded values found for {missing_bases} in the first {counter} reads. 
+Do you expect this file to contain these modifications? parse_bam is looking for {basemods} but for {missing_bases} found only found {[f'{base}+{mod_codes}' for base, mod_codes in mod_codes_found_dict.items()]}.
+
+Consider passing only the motifs and mod codes (e.g. m,h,a) that you expect to be present in your file. 
+You can use modkit adjust-mods --convert <CONVERT> <CONVERT> [OPTIONS] <IN_BAM> <OUT_BAM> to update or consolidate mod codes.
+See https://github.com/nanoporetech/modkit/blob/master/book/src/advanced_usage.md
+                    """
                 )
                 return
     except ValueError as e:
