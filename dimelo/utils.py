@@ -87,6 +87,7 @@ def regions_dict_from_input(
     window_size: int | None = None,
 ) -> dict:
     # TODO: Why is this declared out here, and not within add_region_to_dict? To my eye, that method should just return the fully-loaded dict.
+    # I don't think this approach works because add_region_to_dict can be called many times; the regions parameter can be a single bed path / string OR many in a list
     regions_dict: defaultdict[str, list] = defaultdict(list)
 
     if window_size is not None and window_size <= 0:
@@ -96,10 +97,8 @@ def regions_dict_from_input(
 
     if isinstance(regions, list):
         for region in regions:
-            # TODO: According to the default arg settings for this method, window_size can be None. However, add_region_to_dict does not accept None. This will cause errors.
             add_region_to_dict(region, window_size, regions_dict)
     else:
-        # TODO: According to the default arg settings for this method, regions and window_size can be None. However, add_region_to_dict does not accept None. This will cause errors.
         add_region_to_dict(regions, window_size, regions_dict)
     for chrom in regions_dict:
         regions_dict[chrom].sort(key=lambda x: x[0])
@@ -109,13 +108,17 @@ def regions_dict_from_input(
 
 def add_region_to_dict(
     region: str | Path,
-    window_size: int,
+    window_size: int | None,
     regions_dict: dict,
 ):
     # TODO: The flow of this is very confusing, creating mypy errors, and possibly creates actual errors.
     # mypy error: dimelo/utils.py:110: error: Item "str" of "str | Path" has no attribute "name"  [union-attr]
     # Basically, this method is confusing because the string can be a pathlike or a region string.
     # Find a different way to check whether the string is pathlike or a region string, coerce paths to Path objects, then clean up everything else.
+
+    # Added None as a window_size option, it was already handled below so was always a valid input
+
+    # We check whether the region is a path to a .bed file by seeing if, when coerced into a Path object, it has the suffix 'bed'
     if Path(region).suffix == ".bed":
         with open(region) as bed_regions:
             for line_index, line in enumerate(bed_regions):
@@ -148,25 +151,31 @@ def add_region_to_dict(
                         )
                 else:
                     raise ValueError(
-                        f"Invalid bed format line {line_index} of {region.name}"
+                        f"Invalid bed format line {line_index} of {Path(region).name}"
                     )
+    # If the region is a path but *not* to a bed file, that isn't valid
     elif isinstance(region, Path):
         raise ValueError(
             f"Path object {region} is not pointing to a .bed file. regions must be provided as paths to .bed files or as strings in the format chrX:XXX-XXX."
         )
+    # If the region is a string and doesn't convert to a path to a bed file, then it must be a region string else it cannot be parsed
     elif (
         isinstance(region, str)
         and len(region.split(":")) == 2
         and len(region.split(":")[1].split("-")) == 2
     ):
-        chrom, coords = region.split(":")
+        # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
+        region_coords = region.split(",")
+        # The default strand is ., which is neither strand
+        strand = region_coords[1] if len(region_coords) > 1 else "."
+        chrom, coords = region_coords[0].split(":")
         start, end = map(int, coords.split("-"))
         if window_size is None:
-            regions_dict[chrom].append((start, end, "."))
+            regions_dict[chrom].append((start, end, strand))
         else:
             center_coord = (start + end) // 2
             regions_dict[chrom].append(
-                (center_coord - window_size, center_coord + window_size, ".")
+                (center_coord - window_size, center_coord + window_size, strand)
             )
     else:
         raise ValueError(
