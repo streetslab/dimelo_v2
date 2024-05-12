@@ -98,7 +98,10 @@ def plot_enrichment_profile(
 
 
 def by_modification(
-    mod_file_name: str | Path, regions: str | Path, motifs: list[str], **kwargs
+    mod_file_name: str | Path,
+    regions: str | Path,
+    motifs: list[str],
+    **kwargs,
 ) -> Axes:
     """
     Plot enrichment profile, holding modification file and regions constant, varying modification types

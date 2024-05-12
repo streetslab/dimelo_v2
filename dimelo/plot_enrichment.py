@@ -10,6 +10,7 @@ def plot_enrichment(
     regions_list: list[str | Path | list[str | Path]],
     motifs: list[str],
     sample_names: list[str],
+    window_size: int | None = None,
     **kwargs,
 ) -> Axes:
     """
@@ -45,7 +46,10 @@ def plot_enrichment(
         match mod_file.suffix:
             case ".gz":
                 n_mod, n_total = load_processed.pileup_counts_from_bedmethyl(
-                    bedmethyl_file=mod_file, regions=regions, motif=motif
+                    bedmethyl_file=mod_file,
+                    regions=regions,
+                    motif=motif,
+                    window_size=window_size,
                 )
             case ".fake":
                 n_mod, n_total = load_processed.counts_from_fake(
