@@ -15,16 +15,27 @@ def pileup_counts_from_bedmethyl(
     motif: str,
     regions: str | Path | list[str | Path] | None = None,
     # window_size: int | None = None,
+    single_strand: bool = False,
 ) -> tuple[int, int]:
     """
-    Extract number of modified bases and total number of bases from the given bedmethyl file
+    Extract number of modified bases and total number of bases from the given bedmethyl file.
+    Called by plotters or by the user.
 
-    TODO: How to name this method?
+    This function loops through all the provided regions and pulls those regions up in your
+    sorted and indexed bedmethyl file. For rows within those regions, we check that the motif
+    is correct (i.e. sequence context, modified base, mod code, and optionally strand). All
+    correct locations are included in the sum counts that get returned.
+
+    If no regions are specified, we return the sum total for the motif of interest across the
+    entire bedmethyl file.
 
     Args:
         bedmethyl_file: Path to bedmethyl file
         regions: Path to bed file specifying regions
         motif: type of modification to extract data for
+        window_size: (currently disabled) window around center of region, +-window_size//2
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
 
     Returns:
         tuple containing counts of (modified_bases, total_bases)
@@ -54,13 +65,17 @@ def pileup_counts_from_bedmethyl(
             # window_size
         )
         for chromosome, region_list in regions_dict.items():
-            for start_coord, end_coord, _ in region_list:
+            for start_coord, end_coord, strand in region_list:
                 if chromosome in source_tabix.contigs:
                     for row in source_tabix.fetch(chromosome, start_coord, end_coord):
                         tabix_fields = row.split("\t")
                         pileup_basemod = tabix_fields[3]
+                        pileup_strand = tabix_fields[5]
                         keep_basemod = False
-                        if len(pileup_basemod.split(",")) == 3:
+                        if single_strand and pileup_strand != strand:
+                            # This entry is on the wrong strand - skip it
+                            continue
+                        elif len(pileup_basemod.split(",")) == 3:
                             pileup_modname, pileup_motif, pileup_mod_coord = (
                                 pileup_basemod.split(",")
                             )
@@ -128,22 +143,31 @@ def pileup_vectors_from_bedmethyl(
     motif: str,
     regions: str | Path | list[str | Path],
     window_size: int | None = None,
+    single_strand: bool = False,
+    regions_5to3prime: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate trace for the specified modification aggregated across all regions in the given bed file. Called by profile plotters, can also be used by a user directly.
+    Generate trace for the specified modification aggregated across all regions in the given bed file.
+    Called by profile plotters, can also be used by a user directly.
 
-    TODO: Merge regions / region_str / window_size handling into a unified function somewhere
-    TODO: How to name this method?
-    TODO: I feel like stuff like this should be shared functionality
-    TODO: I _THINK_ this should return a value for every position, with non-modified positions as zeros
-    TODO: Currently, this redundantly generates a centered bed file and then never uses it; still doing centering in the actual parsing loop.
-        Obvious solution is to just remove the second centering operation and reference the windowed file. But is there a smarter way to structure the code?
+    This function loops through all the provided regions and pulls those regions up in your
+    sorted and indexed bedmethyl file. For rows within those regions, we check that the motif
+    is correct (i.e. sequence context, modified base, mod code, and optionally strand). We then add
+    to a pileup vector that spans the size of the first region (by default all regions are assumed to
+    be the same size) and then superimposes all other regions over it. If regions_5to3prime is set to True,
+    then negative strand regions are flipped to that all regions are superimposed along the 5 prime to 3 prime
+    direction, which can be helpful if there is directionality to your signal (e.g. upstream v downstream
+    relative to TSSs, TF binding sites, and so on). A region must be provided because otherwise there
+    is no way to know what vector to return. However, a region can be a whole chromosome if desired.
 
     Args:
         bedmethyl_file: Path to bedmethyl file
         regions: Path to bed file specifying centered equal-length regions
         motif: type of modification to extract data for
         window_size: the extent in either direction for windows around the center of regions.
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        regions_5to3prime: True means negative strand regions get flipped, False means no flipping
 
     Returns:
         vector of fraction modifiied bases (e.g. mA/A) calculated for each position; float values between 0 and 1
@@ -172,15 +196,19 @@ def pileup_vectors_from_bedmethyl(
     valid_base_counts = np.zeros(region_len, dtype=int)
     modified_base_counts = np.zeros(region_len, dtype=int)
     for chromosome, region_list in regions_dict.items():
-        for start_coord, end_coord, _ in region_list:
+        for start_coord, end_coord, strand in region_list:
             # TODO: This is not used anywhere; disabling for now
             # center_coord = (start_coord+end_coord)//2
             if chromosome in source_tabix.contigs:
                 for row in source_tabix.fetch(chromosome, start_coord, end_coord):
                     tabix_fields = row.split("\t")
                     pileup_basemod = tabix_fields[3]
+                    pileup_strand = tabix_fields[5]
                     keep_basemod = False
-                    if len(pileup_basemod.split(",")) == 3:
+                    if single_strand and pileup_strand.strip() != strand:
+                        # We are on the wrong strand, skip the rest of the steps for this row
+                        continue
+                    elif len(pileup_basemod.split(",")) == 3:
                         pileup_modname, pileup_motif, pileup_mod_coord = (
                             pileup_basemod.split(",")
                         )
@@ -199,7 +227,13 @@ def pileup_vectors_from_bedmethyl(
                         )
                     if keep_basemod:
                         pileup_info = tabix_fields[9].split(" ")
-                        pileup_coord_relative = int(tabix_fields[1]) - start_coord
+                        if regions_5to3prime and strand == "-":
+                            # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
+                            # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
+                            pileup_coord_relative = end_coord - int(tabix_fields[1]) - 1
+                        else:
+                            # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
+                            pileup_coord_relative = int(tabix_fields[1]) - start_coord
                         if pileup_coord_relative > region_len:
                             print(
                                 f"WARNING: You have specified a region {chromosome}:{start_coord}-{end_coord} that is longer than the first region; the end of the region will be skipped. To make a profile plot with differently-sized region, consider using the window_size parameter to make a profile across centered windows."
@@ -288,12 +322,25 @@ def read_vectors_from_hdf5(
     motifs: list[str],
     regions: str | Path | list[str | Path] | None = None,
     window_size: int | None = None,
+    single_strand: bool = False,
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     calculate_mod_fractions: bool = True,
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
     Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
     for read-by-read vector processing downstream use cases.
+
+    The flow of operation here is we load up the h5 file then loop through our regions and pick
+    out reads corresponding to our criteria. Criteria include chromosome, read starts and ends
+    (compared to region starts and ends), motif, and strand (if single_strand is True). The indices
+    for the desired reads are identified region-by-region, then all the reads for the region (or
+    the whole h5, if no region is passed) are loaded using the process_data function and put into
+    a list. The bytes are then decoded for the array entries, which are manually compressed because
+    h5py wasn't behaving. There's some annoying manual adjustment for the raw probability (no thresh)
+    h5 case because modkit has a silly way of calculating floating point values from 8bit ints (basically
+    adding 1/2 before dividing by 256!)
+
+    After this processing, we calculate modification fractions, sort, and return.
 
     Args:
         file: Path to an hdf5 (.h5) file containing modification data for single reads,
@@ -309,6 +356,8 @@ def read_vectors_from_hdf5(
         motifs: types of modification to extract data for. Motifs are specified as
             {DNA_sequence},{position_of_modification}. For example, a methylated adenine is specified
             as 'A,0' and CpG methylation is specified as 'CG,0'.
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
         window_size: An optional parameter for creating centered windows for the provided regions.
             If provided, all regions will be adjusted to be the same size and centered. If not provided,
             all regions should already be the same size, or there should be only one.
@@ -322,7 +371,6 @@ def read_vectors_from_hdf5(
         a list of strings, naming the datasets returned.
         a regions_dict, containing lists of (region_start,region_end) coordinates by chromosome/contig.
     """
-
     with h5py.File(file, "r") as h5:
         # TODO: Had to manually annotate the expected type of this list as containing strings. Is it truly safe to assume the keys can only be strings?
         datasets: list[str] = [
@@ -363,7 +411,8 @@ def read_vectors_from_hdf5(
                         & np.isin(read_motifs, motifs)
                         & (read_chromosomes == chrom)
                         & (
-                            (region_strand not in ["+", "-"])
+                            (not single_strand)
+                            | (region_strand not in ["+", "-"])
                             | (ref_strands == region_strand)
                         )
                     )
@@ -383,6 +432,7 @@ def read_vectors_from_hdf5(
                             ),
                             [region_start for _ in relevant_read_indices],
                             [region_end for _ in relevant_read_indices],
+                            [region_strand for _ in relevant_read_indices],
                         )
                     )
         else:
@@ -404,6 +454,7 @@ def read_vectors_from_hdf5(
                     ),
                     [-1 for _ in relevant_read_indices],
                     [-1 for _ in relevant_read_indices],
+                    ["." for _ in relevant_read_indices],
                 )
             )
     if binarized:
@@ -417,9 +468,10 @@ def read_vectors_from_hdf5(
             )
             for tup in read_data_list
         ]
+    #  We add region information (start and end; chromosome is already present!)
+    # so that it is possible to sort by and process based on these
+    readwise_datasets += ["region_start", "region_end", "region_strand"]
 
-    readwise_datasets += ["region_start", "region_end"]
-    # We add region information (start and end; chromosome is already present!) so that it is possible to sort by these
     if calculate_mod_fractions:
         # # Add MOTIF_mod_fraction for each unique motif in the read_data_list
         # unique_motifs = np.unique(read_motifs)
@@ -486,6 +538,8 @@ def readwise_binary_modification_arrays(
     motifs: list[str],
     regions: str | Path | list[str | Path],
     window_size: int | None = None,
+    regions_5to3prime: bool = False,
+    single_strand: bool = False,
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     thresh: float | None = None,
     relative: bool = True,
@@ -493,6 +547,14 @@ def readwise_binary_modification_arrays(
     """
     Pulls a list of read data out of a file containing processed read vectors, formatted with
     seaborn plotting in mind. Currently we only support .h5 files.
+
+    After running read_vectors_from_hdf5, this function takes the baton to convert the names of
+    the sorted reads into integer indices, then goes through the reads and strips down the mod
+    vectors to simply a list of modified positions (applying a threshold if one has not already
+    been applied). Mod positions are by default expressed relative to the region from which
+    the read was identified, allowing for nice plotting, but can also be expressed in absolute
+    coordinates. If positions are relative, regions_5to3prime can be used to show all regions
+    as upstream-to-downstream along their respective strands.
 
     Args:
         file: Path to an hdf5 (.h5) file containing modification data for single reads,
@@ -509,6 +571,9 @@ def readwise_binary_modification_arrays(
         window_size: An optional parameter for creating centered windows for the provided regions.
             If provided, all regions will be adjusted to be the same size and centered. If not provided,
             all regions should already be the same size, or there should be only one.
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        regions_5to3prime: True means negative strand regions get flipped, False means no flipping
         sort_by: Read properties by which to sort, either one string or a list of strings. Options
             include chromosome, region_start, region_end, read_start, read_end, and motif. More to
             be added in future.
@@ -539,6 +604,7 @@ def readwise_binary_modification_arrays(
             motifs=motifs,
             regions=regions,
             window_size=window_size,
+            single_strand=single_strand,
             sort_by=sort_by,
         )
         read_name_index = datasets.index("read_name")
@@ -547,6 +613,7 @@ def readwise_binary_modification_arrays(
         region_start_index = datasets.index("region_start")
         region_end_index = datasets.index("region_end")
         read_start_index = datasets.index("read_start")
+        region_strand_index = datasets.index("region_strand")
 
         # Check that this .h5 file was created with a threshold, i.e. that the mod calls are binarized
         if thresh is None:
@@ -579,12 +646,29 @@ def readwise_binary_modification_arrays(
                 mod_pos_in_read = np.flatnonzero(read_data[mod_vector_index] > thresh)
 
             if relative:
-                mod_pos_record = (
-                    mod_pos_in_read
-                    + read_data[read_start_index]
-                    - (read_data[region_start_index] + read_data[region_end_index]) // 2
-                )
+                if regions_5to3prime and read_data[region_strand_index] == "-":
+                    # Here we want to show the regions each along their 5 prime to 3 prime direction
+                    # This means that negative strand regions need to be flipped
+                    mod_pos_record = -(
+                        mod_pos_in_read
+                        + read_data[read_start_index]
+                        - (read_data[region_start_index] + read_data[region_end_index])
+                        // 2
+                    )
+                else:
+                    # This is the default case: just make the coordinates relative using
+                    # the reference genome coordinate system. Normal, easy, chill, nice.
+                    mod_pos_record = (
+                        mod_pos_in_read
+                        + read_data[read_start_index]
+                        - (read_data[region_start_index] + read_data[region_end_index])
+                        // 2
+                    )
             else:
+                # If we aren't using relative coordinates, then I think the 5prime to 3prime argument
+                # can just be ignored, and I think it's nicer if that's silent - less clutter in the output
+                # Basically if you are keeping different regions separate using other metadata (such as
+                # just keeping their actual real genomic coordinates) it is superfluous to do the 5to3 flip.
                 mod_pos_record = mod_pos_in_read + read_data[read_start_index]
 
             mod_coords_list += list(mod_pos_record)
