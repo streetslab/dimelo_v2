@@ -126,13 +126,16 @@ def add_region_to_dict(
             for line_index, line in enumerate(bed_regions):
                 fields = line.split()
                 if len(fields) > 2:
-                    if len(fields) > 3:
+                    # Per the bed spec, the 6th column is strand
+                    # https://genome.ucsc.edu/FAQ/FAQformat.html
+                    if len(fields) > 5:
                         chrom, start, end, strand = (
                             fields[0],
                             int(fields[1]),
                             int(fields[2]),
-                            fields[3],
+                            fields[5],
                         )
+                    # If strand isn't in the bed file, we set to . (neither/both)
                     else:
                         chrom, start, end, strand = (
                             fields[0],
