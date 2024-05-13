@@ -11,6 +11,7 @@ def plot_enrichment(
     motifs: list[str],
     sample_names: list[str],
     # window_size: int | None = None,
+    single_strand: bool = False,
     **kwargs,
 ) -> Axes:
     """
@@ -30,6 +31,9 @@ def plot_enrichment(
         bed_file_names: list of paths to bed files specifying regions to extract
         mod_names: list of modifications to extract; expected to match mods available in the relevant mod_files
         sample_names: list of names to use for labeling bars in the output; x-axis labels
+        window_size: (currently disabled) window around center of region, +-window_size//2
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
         kwargs: other keyword parameters passed through to utils.bar_plot
 
     Returns:
@@ -50,6 +54,7 @@ def plot_enrichment(
                     regions=regions,
                     motif=motif,
                     # window_size=window_size,
+                    single_strand=single_strand,
                 )
             case ".fake":
                 n_mod, n_total = load_processed.counts_from_fake(

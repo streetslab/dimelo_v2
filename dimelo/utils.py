@@ -158,13 +158,13 @@ def add_region_to_dict(
     # If the region is a path but *not* to a bed file, that isn't valid
     elif isinstance(region, Path):
         raise ValueError(
-            f"Path object {region} is not pointing to a .bed file. regions must be provided as paths to .bed files or as strings in the format chrX:XXX-XXX."
+            f"Path object {region} is not pointing to a .bed file. regions must be provided as paths to .bed files or as strings in the format chrX:XXX-XXX,strand."
         )
     # If the region is a string and doesn't convert to a path to a bed file, then it must be a region string else it cannot be parsed
     elif (
         isinstance(region, str)
         and len(region.split(":")) == 2
-        and len(region.split(":")[1].split("-")) == 2
+        and 2 <= len(region.split(":")[1].split("-")) <= 3
     ):
         # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
         region_coords = region.split(",")
@@ -181,7 +181,7 @@ def add_region_to_dict(
             )
     else:
         raise ValueError(
-            f"Invalid regions {type(region)}: {region}. Please use the format chrX:XXX-XXX."
+            f"Invalid regions {type(region)}: {region}. Please use the format chrX:XXX-XXX,strand."
         )
 
 
