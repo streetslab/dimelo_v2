@@ -24,6 +24,8 @@ def plot_reads(
     regions: str | Path | list[str | Path],
     motifs: list[str],
     window_size: int | None = None,
+    single_strand: bool = False,
+    regions_5to3prime: bool = False,
     sort_by: str | list[str] = "shuffle",
     thresh: float | None = None,
     relative: bool = True,
@@ -40,6 +42,13 @@ def plot_reads(
         mod_file_name: path to file containing modification data for single reads
         regions: path to bed file specifying regions to extract
         motifs: list of modifications to extract; expected to match mods available in the relevant mod_files
+        window_size: we plot +-window_size//2 from the center of the region(s)
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        regions_5to3prime: True means negative strand regions get flipped, False means no flipping. Only works if relative=True
+        sort_by: ordered list for hierarchical sort. Currently only smallest to biggest.
+        thresh: if no threshold has been applied already, this will threshold the mod calls for plotting (method is only boolean)
+        relative: if True, all regions are centered
 
     Returns:
         Axes object containing the plot
@@ -70,6 +79,8 @@ def plot_reads(
                     regions=regions,
                     motifs=motifs,
                     window_size=window_size,
+                    single_strand=single_strand,
+                    regions_5to3prime=regions_5to3prime,
                     thresh=thresh,
                     relative=relative,
                     sort_by=sort_by,
