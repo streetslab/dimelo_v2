@@ -39,11 +39,13 @@ class ParsedMotif:
                 raise ValueError(f"Motif {motif_string} has an out-of-range mod index.")
             self.modified_base = self.motif_seq[self.modified_pos]
             self.mod_codes = BASEMOD_NAMES_DICT[self.modified_base]
-            self.warning = f"""
-WARNING: {motif_string} does not specify mod code.
-Defaulting to {self.mod_codes}.
-Processing assumes at most one of {self.mod_codes} is present in your data.
-                            """
+            self.warning = None
+            # Removed this because it is annoying to have the output all the time. Can bring back easily.
+        #             self.warning = f"""
+        # WARNING: {motif_string} does not specify mod code.
+        # Defaulting to {self.mod_codes}.
+        # Processing assumes at most one of {self.mod_codes} is present in your data.
+        #                             """
         elif len(parts) == 3:
             # If a mod code is specified, that will be the only one we look for
             self.motif_seq = parts[0]
