@@ -35,9 +35,9 @@ class ParsedMotif:
         """
         ParsedMotif takes in a base modification specifier motif, e.g. CG,0 or CG,0,m,
         and parses it for easy use later.
-
+        
         args:
-            -motif_string: a specifier string containing sequence_context,mod_coord(,optional mod_code)
+            -motif_string: a specifier string containing sequence_context,mod_coord(,optional mod_code) 
         """
         parts = motif_string.split(",")
         if len(parts) == 2:
