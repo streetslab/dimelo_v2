@@ -12,6 +12,8 @@ def plot_enrichment_profile(
     motifs: list[str],
     sample_names: list[str],
     window_size: int,
+    single_strand: bool = False,
+    regions_5to3prime: bool = False,
     smooth_window: int | None = None,
     **kwargs,
 ) -> Axes:
@@ -28,6 +30,7 @@ def plot_enrichment_profile(
     TODO: Style-wise, is it cleaner to have it be a match statement or calling a method from a global dict? Cleaner here with a dict, cleaner overall with the match statements?
     TODO: I think it's reasonable for smoothing min_periods to be always set to 1 for this method, as it's a visualization tool, not quantitative. Is this unreasonable?
     TODO: Should the more restrictive meta versions allow *args, or only **kwargs?
+    No, we want to be able to pass kwargs down to the line plotter, I think. Especially if we swap it out for one that takes more different standard args.
     TODO: It's mildly confusing that there are required args that are only seen as *args or **kwargs in the more restrictive meta versions... But this is so much cleaner...
 
     Args:
@@ -36,6 +39,9 @@ def plot_enrichment_profile(
         mod_names: list of modifications to extract; expected to match mods available in the relevant mod_files
         sample_names: list of names to use for labeling traces in the output; legend entries
         window_size: half-size of the desired window to plot; how far the window stretches on either side of the center point
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        regions_5to3prime: True means negative strand regions get flipped, False means no flipping
         smooth_window: size of the moving window to use for smoothing. If set to None, no smoothing is performed
         kwargs: other keyword parameters passed through to utils.line_plot
 
@@ -58,6 +64,8 @@ def plot_enrichment_profile(
                         regions=regions,
                         motif=motif,
                         window_size=window_size,
+                        single_strand=single_strand,
+                        regions_5to3prime=regions_5to3prime,
                     )
                 )
                 # Default to nan so we can skip over unfilled values when plotting or doing a rolling average
@@ -98,7 +106,10 @@ def plot_enrichment_profile(
 
 
 def by_modification(
-    mod_file_name: str | Path, regions: str | Path, motifs: list[str], **kwargs
+    mod_file_name: str | Path,
+    regions: str | Path,
+    motifs: list[str],
+    **kwargs,
 ) -> Axes:
     """
     Plot enrichment profile, holding modification file and regions constant, varying modification types
@@ -121,6 +132,8 @@ dimelo/plot_enrichment_profile.py:142: error: Incompatible types in assignment (
 dimelo/plot_enrichment_profile.py:148: error: Argument "sample_names" to "plot_enrichment_profile" has incompatible type "list[str] | None"; expected "list[str]"  [arg-type]
 dimelo/plot_enrichment_profile.py:168: error: Incompatible types in assignment (expression has type "list[str | Path]", variable has type "list[str] | None")  [assignment]
 dimelo/plot_enrichment_profile.py:174: error: Argument "sample_names" to "plot_enrichment_profile" has incompatible type "list[str] | None"; expected "list[str]"  [arg-type]
+
+If sample names is None we assign it non-None values, so it's not clear what the problem is to me. We could make an intermediate dummy variable I guess? If that is the complaint?
 """
 
 
