@@ -110,7 +110,9 @@ def plot_reads(
     handles, labels = axes.get_legend_handles_labels()
 
     # Update legend properties
-    legend.set_title("Mod")
+    # TODO: Do we need to do this now and after?
+    if legend is not None:
+        legend.set_title("Mod")
 
     # Update marker size for all handles
     for handle in handles:
@@ -118,9 +120,12 @@ def plot_reads(
             handle.set_markersize(10)  # Set a larger marker size for legend
 
     # Re-apply the legend with updated handles
+    # TODO: Is this step necessary?
     axes.legend(handles, labels, title="Mod")
 
     # TODO: Technically, regions_dict can be None by this point. In that scenario, it will error out when checking the length.
+    # It can be None according to type hints but in the actual logical flow I believe it cannot be None
+    # However, we can easily just check whether it is None here as well, in case we change behavior elsewhere.
     # Identified with mypy through the following error:
     # dimelo/plot_reads.py:101: error: Argument 1 to "len" has incompatible type "dict[Any, Any] | None"; expected "Sized"  [arg-type]
     if relative and regions_dict is not None and len(regions_dict) > 0:
