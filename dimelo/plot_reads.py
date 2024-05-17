@@ -106,12 +106,19 @@ def plot_reads(
     # Retrieve the existing legend
     legend = axes.legend_
 
+    # Retrieve legend handles and labels
+    handles, labels = axes.get_legend_handles_labels()
+
     # Update legend properties
-    if legend is not None:
-        legend.set_title("Mod")
-        for handle in legend.legendHandles:
-            if hasattr(handle, "set_markersize"):
-                handle.set_markersize(10)  # Set a larger marker size for legend
+    legend.set_title("Mod")
+
+    # Update marker size for all handles
+    for handle in handles:
+        if hasattr(handle, "set_markersize"):
+            handle.set_markersize(10)  # Set a larger marker size for legend
+
+    # Re-apply the legend with updated handles
+    axes.legend(handles, labels, title="Mod")
 
     # TODO: Technically, regions_dict can be None by this point. In that scenario, it will error out when checking the length.
     # Identified with mypy through the following error:
