@@ -116,7 +116,7 @@ def plot_reads(
     # TODO: Technically, regions_dict can be None by this point. In that scenario, it will error out when checking the length.
     # Identified with mypy through the following error:
     # dimelo/plot_reads.py:101: error: Argument 1 to "len" has incompatible type "dict[Any, Any] | None"; expected "Sized"  [arg-type]
-    if relative and len(regions_dict) > 0:
+    if relative and regions_dict is not None and len(regions_dict) > 0:
         region1_start, region1_end, _ = next(iter(regions_dict.values()))[0]
         effective_window_size = (region1_end - region1_start) // 2
         axes.set_xlim([-effective_window_size, effective_window_size])

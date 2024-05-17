@@ -29,11 +29,13 @@ def pileup_counts_from_bedmethyl(
     If no regions are specified, returns the sum total for the motif of interest across the
     entire bedmethyl file.
 
+    TODO: Consider renaming this method, e.g. counts_from_pileup
+
     Args:
         bedmethyl_file: Path to bedmethyl file
         regions: Path to bed file specifying regions
         motif: type of modification to extract data for
-        window_size: (currently disabled) window around center of region, +-window_size//2
+        window_size: (currently disabled) window around center of region, +-window_size
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
 
@@ -56,8 +58,10 @@ def pileup_counts_from_bedmethyl(
         )
         for chromosome, region_list in regions_dict.items():
             for start_coord, end_coord, strand in region_list:
+                # TODO: change to try-except
                 if chromosome in source_tabix.contigs:
                     for row in source_tabix.fetch(chromosome, start_coord, end_coord):
+                        # TODO Consider using csv module
                         tabix_fields = row.split("\t")
                         pileup_basemod = tabix_fields[3]
                         pileup_strand = tabix_fields[5]
@@ -82,6 +86,7 @@ def pileup_counts_from_bedmethyl(
                             raise ValueError(
                                 f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
                             )
+                        # TODO: consolidate the above into a function; just do adding outside
                         if keep_basemod:
                             pileup_info = tabix_fields[9].split(" ")
                             valid_base_count += int(pileup_info[0])
@@ -137,18 +142,26 @@ def pileup_vectors_from_bedmethyl(
     regions_5to3prime: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate trace for the specified modification aggregated across all regions in the given bed file.
+    Extract per-position pileup counts at valid motifs across one or more superimposed regions.
     Called by profile plotters, can also be used by a user directly.
 
-    This function loops through all the provided regions and pulls those regions up in the input
-    sorted and indexed bedmethyl file. For rows within those regions, it checks that the motif
+    Returns two vectors:
+    * Total number of times a modified base in the motif was found at each position
+    * Total number of times the motif was found at each position
+
+    This function loops through all the provided regions and fetches those regions from the
+    bedmethyl file. For rows within those regions, it checks that the motif
     is correct (i.e. sequence context, modified base, mod code, and optionally strand). It then adds
-    to a pileup vector that spans the size of the first region (by default all regions are assumed to
-    be the same size) and then superimposes all other regions over it. If regions_5to3prime is set to True,
-    then negative strand regions are flipped to that all regions are superimposed along the 5 prime to 3 prime
-    direction, which can be helpful if there is directionality to the signal (e.g. upstream v downstream
-    relative to TSSs, TF binding sites, and so on). A region must be provided because otherwise there
-    is no way to know what vector to return. However, a region can be a whole chromosome if desired.
+    to two vectors (mod and valid). By default all regions are assumed to
+    be the same size (the size of the first region).
+
+    If regions_5to3prime is set to True, then negative strand regions are flipped to that all regions
+    are superimposed along the 5 prime to 3 prime direction, which can be helpful if there is
+    directionality to the signal (e.g. upstream v downstream relative to TSSs, TF binding sites, and so on).
+    A region must be provided because otherwise there is no way to know what vector to return.
+    However, a region can be a whole chromosome if desired.
+
+    TODO: Consider renaming this method, e.g. vectors_from_pileup
 
     Args:
         bedmethyl_file: Path to bedmethyl file
@@ -160,7 +173,7 @@ def pileup_vectors_from_bedmethyl(
         regions_5to3prime: True means negative strand regions get flipped, False means no flipping
 
     Returns:
-        vector of fraction modifiied bases (e.g. mA/A) calculated for each position; float values between 0 and 1
+        tuple containing (modified_base_counts, valid_base_counts)
     """
 
     source_tabix = pysam.TabixFile(str(bedmethyl_file))
@@ -169,18 +182,22 @@ def pileup_vectors_from_bedmethyl(
 
     regions_dict = utils.regions_dict_from_input(regions, window_size)
 
+    # Peek at a region to figure out what size the vectors should be
     first_key = next(iter(regions_dict))
     first_tuple = regions_dict[first_key][0]
     region_len = first_tuple[1] - first_tuple[0]
 
     valid_base_counts = np.zeros(region_len, dtype=int)
     modified_base_counts = np.zeros(region_len, dtype=int)
+
     for chromosome, region_list in regions_dict.items():
         for start_coord, end_coord, strand in region_list:
             # TODO: This is not used anywhere; disabling for now
             # center_coord = (start_coord+end_coord)//2
             if chromosome in source_tabix.contigs:
                 for row in source_tabix.fetch(chromosome, start_coord, end_coord):
+                    # TODO: can we consolidate this with pileup_counts_from_bedmethyl?
+                    # Just the checks?
                     tabix_fields = row.split("\t")
                     pileup_basemod = tabix_fields[3]
                     pileup_strand = tabix_fields[5]
@@ -245,59 +262,6 @@ def vector_from_fake(window_size: int, *args, **kwargs) -> np.ndarray:
     )
 
 
-def convert_bytes(item):
-    """Convert bytes to string if item is bytes, otherwise return as is."""
-    if isinstance(item, bytes):
-        return item.decode()
-    return item
-
-
-def convert_tuple_elements(tup):
-    """Convert all bytes elements in a tuple to strings."""
-    return tuple(convert_bytes(item) for item in tup)
-
-
-def adjust_mod_probs_in_arrays(mod_array, val_array):
-    mod_array[np.flatnonzero(val_array)] += 1 / 512
-    return mod_array
-
-
-def adjust_mod_probs_in_tuples(tup, mod_idx, val_idx):
-    return tuple(
-        item if index != mod_idx else adjust_mod_probs_in_arrays(item, tup[val_idx])
-        for index, item in enumerate(tup)
-    )
-
-
-def binary_to_np_array(compressed_bytes, dtype, decompressor, binarized, int8tofloat):
-    if binarized:
-        return np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(bool)
-    elif int8tofloat:
-        return (
-            (np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(float))
-            / 256
-        ).astype(np.float16)
-    else:
-        return np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(int)
-
-
-def process_data(h5, dataset, indices, compressed, dtype, decompressor, binarized):
-    if compressed:
-        # Determine if int8tofloat should be applied
-        int8tofloat = "mod_vector" in dataset
-        # Logic for compressed data
-        loaded_uint8_list = h5[dataset][list(indices)]
-        return [
-            binary_to_np_array(
-                loaded_uint8.tobytes(), dtype, decompressor, binarized, int8tofloat
-            )
-            for loaded_uint8 in loaded_uint8_list
-        ]
-    else:
-        # Logic for non-compressed data
-        return h5[dataset][list(indices)]
-
-
 def read_vectors_from_hdf5(
     file: str | Path,
     motifs: list[str],
@@ -317,9 +281,11 @@ def read_vectors_from_hdf5(
     for the desired reads are identified region-by-region, then all the reads for the region (or
     the whole h5, if no region is passed) are loaded using the process_data function and put into
     a list. The bytes are then decoded for the array entries, which are manually compressed because
-    h5py wasn't behaving. There's some annoying manual adjustment for the raw probability (no thresh)
-    h5 case because modkit has a silly way of calculating floating point values from 8bit ints (basically
-    adding 1/2 before dividing by 256!)
+    h5py wasn't behaving.
+
+    There's some adjustment for the raw probability (no thresh) to match modkit extract outputs.
+    Specifically, the 0-255 8bit int has 0.5 added before dividing by 256, giving mod qualities
+    between 0.001953 and 0.99805 for bases in valid motifs. (Invalid positions have zeros.)
 
     After this processing, we calculate modification fractions, sort, and return.
 
@@ -353,7 +319,6 @@ def read_vectors_from_hdf5(
         a regions_dict, containing lists of (region_start,region_end) coordinates by chromosome/contig.
     """
     with h5py.File(file, "r") as h5:
-        # TODO: Had to manually annotate the expected type of this list as containing strings. Is it truly safe to assume the keys can only be strings?
         datasets: list[str] = [
             name for name, obj in h5.items() if isinstance(obj, h5py.Dataset)
         ]
@@ -368,24 +333,30 @@ def read_vectors_from_hdf5(
             binarized = not np.isnan(threshold_applied_to_h5)
         else:
             # backwards compatible with the old h5 file structure
+            # If we remove backwards compatibility, beta test (Feb 2024) h5 extractions will not run
             readwise_datasets = datasets
             compressed_binary_datasets = []
             binarized = True  # in this case all this will do is make it so we don't apply a +1/512 correction to the mod_vector
 
+        # Pre-load metadata so we can identify reads to pull from file
         read_chromosomes = np.array(h5["chromosome"], dtype=str)
         read_starts = np.array(h5["read_start"])
         read_ends = np.array(h5["read_end"])
         read_motifs = np.array(h5["motif"], dtype=str)
         ref_strands = np.array(h5["strand"], dtype=str)
 
+        # Identify reads to load, then load them
         if regions is not None:
             regions_dict = utils.regions_dict_from_input(
                 regions=regions,
                 window_size=window_size,
             )
-            read_data_list = []
+            read_tuples_raw = []
             for chrom, region_list in regions_dict.items():
                 for region_start, region_end, region_strand in region_list:
+                    # Find the read indices that we want to load
+                    # TODO: consider building this up and then loading all at the end, chunked
+                    # TODO: consolidate logic into clear variables
                     relevant_read_indices = np.flatnonzero(
                         (read_ends > region_start)
                         & (read_starts < region_end)
@@ -397,10 +368,10 @@ def read_vectors_from_hdf5(
                             | (ref_strands == region_strand)
                         )
                     )
-                    read_data_list += list(
+                    read_tuples_raw += list(
                         zip(
                             *(
-                                process_data(
+                                retrieve_h5_data(
                                     h5=h5,
                                     dataset=dataset,
                                     indices=relevant_read_indices,
@@ -419,10 +390,10 @@ def read_vectors_from_hdf5(
         else:
             regions_dict = None
             relevant_read_indices = np.flatnonzero(np.isin(read_motifs, motifs))
-            read_data_list = list(
+            read_tuples_raw = list(
                 zip(
                     *(
-                        process_data(
+                        retrieve_h5_data(
                             h5=h5,
                             dataset=dataset,
                             indices=relevant_read_indices,
@@ -438,60 +409,65 @@ def read_vectors_from_hdf5(
                     ["." for _ in relevant_read_indices],
                 )
             )
-    if binarized:
-        read_data_converted = [convert_tuple_elements(tup) for tup in read_data_list]
-    else:
-        read_data_converted = [
-            adjust_mod_probs_in_tuples(
-                convert_tuple_elements(tup),
-                readwise_datasets.index("mod_vector"),
-                readwise_datasets.index("val_vector"),
-            )
-            for tup in read_data_list
-        ]
     #  We add region information (start, end, and strand; chromosome is already present!)
     # so that it is possible to sort by and process based on these
     readwise_datasets += ["region_start", "region_end", "region_strand"]
 
+    # This is sanitizing the dataset entries and adjusting prob values if needed
+    if binarized:
+        read_tuples_processed = [
+            convert_bytes_to_strings(tup) for tup in read_tuples_raw
+        ]
+    else:
+        read_tuples_processed = [
+            adjust_mod_probs_in_tuples(
+                convert_bytes_to_strings(tup),
+                readwise_datasets.index("mod_vector"),
+                readwise_datasets.index("val_vector"),
+            )
+            for tup in read_tuples_raw
+        ]
+
     if calculate_mod_fractions:
-        # # Add MOTIF_mod_fraction for each unique motif in the read_data_list
-        # unique_motifs = np.unique(read_motifs)
         # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
         readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
-        # TODO: Is this the correct type annotation? I'm pretty sure it is.
+        # dict[read_name][motif]=modified fraction of motif in read, float
         mod_fractions_by_read_name_by_motif: defaultdict[
             str, defaultdict[str, float]
         ] = defaultdict(lambda: defaultdict(lambda: 0.0))
         for motif in motifs:
-            for read_data in read_data_converted:
-                if read_data[readwise_datasets.index("motif")] == motif:
-                    mod_sum = np.sum(read_data[readwise_datasets.index("mod_vector")])
-                    val_sum = np.sum(read_data[readwise_datasets.index("val_vector")])
+            for read_tuple in read_tuples_processed:
+                if read_tuple[readwise_datasets.index("motif")] == motif:
+                    mod_sum = np.sum(read_tuple[readwise_datasets.index("mod_vector")])
+                    val_sum = np.sum(read_tuple[readwise_datasets.index("val_vector")])
                     mod_fraction = mod_sum / val_sum if val_sum > 0 else 0
                     mod_fractions_by_read_name_by_motif[
-                        read_data[readwise_datasets.index("read_name")]
+                        read_tuple[readwise_datasets.index("read_name")]
                     ][motif] = mod_fraction
 
-        read_data_all = []
-        for read_data in read_data_converted:
-            read_data_all.append(
-                tuple(val for val in read_data)
+        read_tuples_all = []
+        for read_tuple in read_tuples_processed:
+            read_tuples_all.append(
+                tuple(val for val in read_tuple)
                 + tuple(
                     mod_frac
                     for mod_frac in mod_fractions_by_read_name_by_motif[
-                        read_data[readwise_datasets.index("read_name")]
+                        read_tuple[readwise_datasets.index("read_name")]
                     ].values()
                 )
             )
     else:
-        read_data_all = read_data_converted
+        read_tuples_all = read_tuples_processed
+
+    ## Sort the reads
+
     # Enforce that sort_by is a list
     if not isinstance(sort_by, list):
         sort_by = [sort_by]
 
     # If 'shuffle' appears anywhere in sort_by, we first shuffle the list
     if "shuffle" in sort_by:
-        random.shuffle(read_data_all)
+        random.shuffle(read_tuples_all)
 
     try:
         sort_by_indices = [
@@ -505,13 +481,13 @@ def read_vectors_from_hdf5(
         ) from e
 
     if len(sort_by_indices) > 0:
-        sorted_read_data = sorted(
-            read_data_all, key=lambda x: tuple(x[index] for index in sort_by_indices)
+        sorted_read_tuples = sorted(
+            read_tuples_all, key=lambda x: tuple(x[index] for index in sort_by_indices)
         )
     else:
-        sorted_read_data = read_data_all
+        sorted_read_tuples = read_tuples_all
 
-    return sorted_read_data, readwise_datasets, regions_dict
+    return sorted_read_tuples, readwise_datasets, regions_dict
 
 
 def readwise_binary_modification_arrays(
@@ -618,8 +594,8 @@ def readwise_binary_modification_arrays(
         string_to_int = {
             read_name: index for index, read_name in enumerate(unique_in_order)
         }
-        # string_to_int = {read_name: index for index, read_name in zip(first_indices,unique_read_names)}
         read_ints = np.array([string_to_int[read_name] for read_name in read_names])
+
         for read_int, read_data in zip(read_ints, sorted_read_data_converted):
             if thresh is None:
                 mod_pos_in_read = np.flatnonzero(read_data[mod_vector_index])
@@ -720,3 +696,62 @@ def reads_from_fake(
     read_names = np.concatenate(read_names)
     mods = np.concatenate(mods)
     return reads, read_names, mods, {}
+
+
+# def convert_bytes(item):
+#     """Convert bytes to string if item is bytes, otherwise return as is."""
+#     if isinstance(item, bytes):
+#         return item.decode()
+#     return item
+
+
+def convert_bytes_to_strings(tup):
+    """Convert all bytes elements in a tuple to strings."""
+    return tuple(item.decode() if isinstance(item, bytes) else item for item in tup)
+    # tuple(convert_bytes(item) for item in tup)
+
+
+def adjust_mod_probs_in_arrays(mod_array, val_array):
+    mod_array[np.flatnonzero(val_array)] += 1 / 512
+    return mod_array
+
+
+def adjust_mod_probs_in_tuples(tup, mod_idx, val_idx):
+    return tuple(
+        item if index != mod_idx else adjust_mod_probs_in_arrays(item, tup[val_idx])
+        for index, item in enumerate(tup)
+    )
+
+
+def binary_to_np_array(compressed_bytes, dtype, decompressor, binarized, int8tofloat):
+    if binarized:
+        return np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(bool)
+    elif int8tofloat:
+        return (
+            (np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(float))
+            / 256
+        ).astype(np.float16)
+    else:
+        return np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(int)
+
+
+def retrieve_h5_data(h5, dataset, indices, compressed, dtype, decompressor, binarized):
+    """
+    Load the requested dataset from the h5 file at the relevant indices.
+
+    For compressed vector data, decompress each dataset element to numpy array.
+    """
+    if compressed:
+        # Determine if int8tofloat should be applied
+        int8tofloat = "mod_vector" in dataset
+        # Logic for compressed data
+        loaded_uint8_list = h5[dataset][list(indices)]
+        return [
+            binary_to_np_array(
+                loaded_uint8.tobytes(), dtype, decompressor, binarized, int8tofloat
+            )
+            for loaded_uint8 in loaded_uint8_list
+        ]
+    else:
+        # Logic for non-compressed data
+        return h5[dataset][list(indices)]
