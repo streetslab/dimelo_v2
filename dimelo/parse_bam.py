@@ -2,7 +2,6 @@ import gzip
 import multiprocessing
 import os
 import subprocess
-import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -22,40 +21,8 @@ indexed random-access pileup and read-wise processed outputs.
 Global variables
 """
 
-# This should be updated in tandem with the environment.yml nanoporetech::modkit version
-EXPECTED_MODKIT_VERSION = "0.2.4"
-
 # Specifies how many reads to check for the base modifications of interest.
 NUM_READS_TO_CHECK = 100
-
-
-"""
-Import checks
-"""
-# Add conda env bin folder to path if it is not already present
-current_interpreter = sys.executable
-env_bin_path = os.path.dirname(current_interpreter)
-if env_bin_path not in os.environ["PATH"]:
-    print(
-        f"PATH does not include the conda environment /bin folder. Adding {env_bin_path}."
-    )
-    os.environ["PATH"] = f'{env_bin_path}:{os.environ["PATH"]}'
-    print(f'PATH is now {os.environ["PATH"]}')
-
-# Check modkit on first import
-try:
-    result = subprocess.run(["modkit", "--version"], stdout=subprocess.PIPE, text=True)
-    modkit_version = result.stdout
-    if modkit_version.split()[1] == EXPECTED_MODKIT_VERSION:
-        print(f"modkit found with expected version {EXPECTED_MODKIT_VERSION}")
-    else:
-        print(
-            f"modkit found with unexpected version {modkit_version.split()[1]}. Versions other than {EXPECTED_MODKIT_VERSION} may exhibit unexpected behavior. It is recommended that you use v{EXPECTED_MODKIT_VERSION}"
-        )
-except subprocess.CalledProcessError:
-    print(
-        'Executable not found for modkit. Install dimelo using "conda env create -f environment.yml" or install modkit manually to your conda environment using "conda install nanoporetech::modkit==0.2.4". Without modkit you cannot run parse_bam functions.'
-    )
 
 """
 User-facing parse operations: pileup and extract
@@ -78,19 +45,21 @@ def pileup(
     override_checks: bool = False,
 ) -> tuple[Path, Path]:
     """
-    TODO: Merge bed_file / region_str / window_size handling into a unified function somewhere
-
-    Takes a file containing long read sequencing data aligned
+    Takes a bam file containing long read sequencing data aligned
     to a reference genome with modification calls for one or more base/context
-    and creates a pileup. A pileup is a genome-position-wise sum of both reads with
+    and creates a pileup. A pileup contains genome-position-wise sums of both reads with
     bases that could have the modification in question and of reads that are in
     fact modified.
 
     The current implementation of this method uses modkit, a tool built by
     Nanopore Technologies, along with htslib tools compress and index the output
-    bedmethyl file.
+    bedmethyl file. The modkit command for this function is `modkit pileup`.
 
     https://github.com/nanoporetech/modkit/
+
+    The intermediate output file is a standard bedmethyl file containing all
+    specified motifs and mod codes. The compressed and indexed output file is
+    a .bed.gz file with an accompanying .bed.gz.tbi index.
 
     Args:
         output_file: a string or Path object pointing to the location of a .bam file.
@@ -135,7 +104,7 @@ def pileup(
     Returns:
         Path object pointing to the compressed and indexed .bed.gz bedmethyl file, ready
         for plotting functions.
-        Path object pointing to regions.processed.bed
+        Path object pointing to 'regions.processed.bed', the `--include-bed` file used for `modkit pileup`
 
     """
     """
@@ -147,6 +116,9 @@ def pileup(
     
     I'm not sure of the most elegant way to fix it. Come back and address.
     """
+
+    ## Verify and prepare inputs and outputs
+
     input_file, ref_genome, output_directory = sanitize_path_args(
         input_file, ref_genome, output_directory
     )
@@ -162,8 +134,8 @@ def pileup(
                 f'{e}\nIf you are confident that your inputs are ok, pass "override_checks=True" to convert to warning and proceed with processing.'
             ) from e
 
-    output_path, (output_bedmethyl, output_bedmethyl_sorted, output_bedgz_sorted, _) = (
-        prep_outputs(
+    output_path, (output_bedmethyl, output_bedmethyl_sorted, output_pileup_path, _) = (
+        prep_output_directory(
             output_directory=output_directory,
             output_name=output_name,
             input_file=input_file,
@@ -176,8 +148,10 @@ def pileup(
         )
     )
 
+    ## Build up the command list to be sent to modkit, then run modkit
+
     # TODO: This is mildly confusing. I get what it's doing, but it's hard to follow / names are bad. Also, why is it used in cleanup here, but not in extract?
-    region_specifier, bed_filepath_processed = create_region_specifier(
+    region_command_list, processed_regions_path = create_region_command_list(
         output_path,
         regions,
         window_size,
@@ -206,9 +180,9 @@ def pileup(
     if log:
         if not quiet:
             print("Logging to ", Path(output_path) / "pileup-log")
-        log_command = ["--log-filepath", Path(output_path) / "pileup-log"]
+        log_command_list = ["--log-filepath", Path(output_path) / "pileup-log"]
     else:
-        log_command = []
+        log_command_list = []
 
     # TODO: This should be a method, like create_region_specifier, or just combined into a prep method for the start...
     cores_avail = multiprocessing.cpu_count()
@@ -230,7 +204,7 @@ def pileup(
         cores_command_list = ["--threads", str(cores)]
 
     # TODO: This is SO SO SO similar to extract; just the ValueError vs. printing. I think this can be resolved
-    mod_thresh_list: list[str] = []
+    mod_thresh_command_list: list[str] = []
     if thresh is None:
         if not quiet:
             print(
@@ -245,19 +219,23 @@ def pileup(
         for motif in motifs:
             parsed_motif = utils.ParsedMotif(motif)
             for mod_code in parsed_motif.mod_codes:
-                mod_thresh_list = mod_thresh_list + [
+                mod_thresh_command_list = mod_thresh_command_list + [
                     "--mod-thresholds",
                     f"{mod_code}:{adjusted_threshold}",
                 ]
 
+    ref_genome_command_list = ["--ref", ref_genome]
+    filter_command_list = ["--filter-threshold", "0"]
+
     pileup_command_list = (
         ["modkit", "pileup", input_file, output_bedmethyl]
-        + region_specifier
+        + region_command_list
         + motif_command_list
-        + ["--ref", ref_genome, "--filter-threshold", "0"]
-        + mod_thresh_list
+        + ref_genome_command_list
+        + filter_command_list
+        + mod_thresh_command_list
         + cores_command_list
-        + log_command
+        + log_command_list
     )
 
     # TODO: Do we need to store and use the output from this method? Previously was being printed immediately afterward.
@@ -279,12 +257,14 @@ def pileup(
     )
     # print(done_string)
 
+    ## Sort, compress, and index the output bedmethyl file
+
     with open(output_bedmethyl_sorted, "w") as sorted_file:
         subprocess.run(
             ["sort", "-k1,1", "-k2,2n", output_bedmethyl], stdout=sorted_file
         )
-    pysam.tabix_compress(output_bedmethyl_sorted, output_bedgz_sorted, force=True)
-    pysam.tabix_index(str(output_bedgz_sorted), preset="bed", force=True)
+    pysam.tabix_compress(output_bedmethyl_sorted, output_pileup_path, force=True)
+    pysam.tabix_index(str(output_pileup_path), preset="bed", force=True)
 
     # TODO: Can cleanup be consolidated?
     if cleanup:
@@ -293,7 +273,7 @@ def pileup(
         if output_bedmethyl_sorted.exists():
             output_bedmethyl_sorted.unlink()
 
-    return output_bedgz_sorted, bed_filepath_processed
+    return output_pileup_path, processed_regions_path
 
 
 def extract(
@@ -312,19 +292,19 @@ def extract(
     override_checks: bool = False,
 ) -> tuple[Path, Path]:
     """
-    TODO: Merge bed_file / region_str / window_size handling into a unified function somewhere
-
-    Takes a file containing long read sequencing data aligned
-    to a reference genome with modification calls for one or more base/context
-    and pulls out data from each individual read. The intermediate outputs contain
-    a plain-text list of all base modifications, split out by type. The compressed
-    and indexed output contains vectors of valid and modified positions within each
-    read.
+    Takes a bam file containing long read sequencing data aligned
+    to a reference genome with modification calls for one or more bases/contexts
+    and pulls out data from each individual read.
 
     The current implementation of this method uses modkit, a tool built by
-    Nanopore Technologies, along with h5py to build the final output file.
+    Nanopore Technologies, along with h5py to build the final output file. The
+    modkit command in this function is `modkit extract`.
 
     https://github.com/nanoporetech/modkit/
+
+    The intermediate outputs are plain text files containing a list of all base modifications,
+    with a file for each motif. The compressed and indexed output contains vectors of valid
+    and modified positions within each read.
 
     Args:
         output_file: a string or Path object pointing to the location of a .bam file.
@@ -369,7 +349,7 @@ def extract(
     Returns:
         Path object pointing to the compressed and indexed output .h5 file, ready for
         plotting functions.
-        Path object pointing to regions.processed.bed
+        Path object pointing to 'regions.processed.bed', the `--include-bed` file used for `modkit extract`
 
     """
     """
@@ -381,6 +361,9 @@ def extract(
     
     I'm not sure of the most elegant way to fix it. Come back and address.
     """
+
+    ## Verify and prepare inputs and outputs
+
     input_file, ref_genome, output_directory = sanitize_path_args(
         input_file, ref_genome, output_directory
     )
@@ -397,14 +380,16 @@ def extract(
             ) from e
 
     # TODO: Add intermediate mod-specific .txt files?
-    output_path, (output_h5,) = prep_outputs(
+    output_path, (output_reads_path,) = prep_output_directory(
         output_directory=output_directory,
         output_name=output_name,
         input_file=input_file,
         output_file_names=["reads.combined_basemods.h5"],
     )
 
-    region_specifier, bed_filepath_processed = create_region_specifier(
+    ## Build up the command lists shared across motifs to be sent to modkit
+
+    region_command_list, processed_regions_path = create_region_command_list(
         output_path,
         regions,
         window_size,
@@ -428,7 +413,7 @@ def extract(
             print(f"Allocating requested {cores} cores.")
         cores_command_list = ["--threads", str(cores)]
 
-    mod_thresh_list: list[str] = []
+    mod_thresh_command_list: list[str] = []
     if thresh is None:
         if not quiet:
             print(
@@ -444,7 +429,7 @@ def extract(
         for motif in motifs:
             parsed_motif = utils.ParsedMotif(motif)
             for mod_code in parsed_motif.mod_codes:
-                mod_thresh_list = mod_thresh_list + [
+                mod_thresh_command_list = mod_thresh_command_list + [
                     "--mod-thresholds",
                     f"{mod_code}:{adjusted_threshold}",
                 ]
@@ -452,12 +437,21 @@ def extract(
     if log:
         if not quiet:
             print("logging to ", Path(output_path) / "extract-log")
-        log_command = ["--log-filepath", Path(output_path) / "extract-log"]
+        log_command_list = ["--log-filepath", Path(output_path) / "extract-log"]
     else:
-        log_command = []
+        log_command_list = []
 
+    ref_genome_command_list = ["--ref", ref_genome]
+    filter_command_list = ["--filter-threshold", "0"]
+
+    # Run modkit once for each motif, because the output .txt can be ambiguous otherwise
+    # There is no column currently to specify the motif (e.g. CG,0 vs GCH,1), only canonical
+    # base (e.g. C) and mod code (e.g. m)
+    # There is a 5mer context so we could technically manually motif check if we want to.
+    # Our current design paradigm is to leave all such operations to modkit, hence the loop below.
     for motif in motifs:
-        # print(f'Extracting {basemod} sites')
+        # Here we prepare the motif-specific commands and delete any old .txt file because
+        # modkit will crash otherwise
         motif_command_list = []
         parsed_motif = utils.ParsedMotif(motif)
         motif_command_list.append("--motif")
@@ -471,16 +465,12 @@ def extract(
 
         extract_command_list = (
             ["modkit", "extract", input_file, output_txt]
-            + region_specifier
+            + region_command_list
             + motif_command_list
             + cores_command_list
-            + log_command
-            + [
-                "--ref",
-                ref_genome,
-                "--filter-threshold",
-                "0",
-            ]
+            + log_command_list
+            + ref_genome_command_list
+            + filter_command_list
         )
 
         # TODO: Do we need to store and use the output from this method? Previously was being printed immediately afterward.
@@ -503,28 +493,23 @@ def extract(
         )
         # print(done_string)
 
-        # print(f'Adding {basemod} to {output_h5}')
+        # Create the compressed and indexed output
         read_by_base_txt_to_hdf5(
             output_txt,
-            output_h5,
+            output_reads_path,
             motif,
             adjusted_threshold,
             quiet=quiet,
         )
+        # Delete intermediate file
         if cleanup:
             os.remove(output_txt)
 
-    return output_h5, bed_filepath_processed
+    return output_reads_path, processed_regions_path
 
 
 """
 Helper functions to facilitate bam parse operations
-
-check_bam_format: verify that a bam is formatted correctly to be processed.
-create_region_specifier: create a list to append to the modkit call for specifying genomic regions.
-adjust_threshold: backwards-compatible threshold adjustment, i.e. taking 0-255 thresholds and turning
-    them into 0-1.
-read_by_base_txt_to_hdf5: convert modkit extract txt into an .h5 file for rapid read access.
 """
 
 
@@ -533,6 +518,11 @@ def verify_inputs(
     motifs,
     ref_genome,
 ):
+    """
+    Checks .bam format and alignment quality (to verify that you are using the right reference genome)
+
+    The correct-bases-called fraction, if under 35%, means the user almost definitely passed the wrong reference genome.
+    """
     check_bam_format(input_file, motifs)
     correct_bases, total_bases = get_alignment_quality(input_file, ref_genome)
     if total_bases == 0:
@@ -551,11 +541,15 @@ def check_bam_format(
     motifs: list = ["A,0", "CG,0"],
 ):
     """
-    Check whether a .bam file is formatted appropriately for modkit
+    Check whether a .bam file is formatted appropriately for modkit.
+    * bam file has a .bai index
+    * modification tags named MM/ML (NOT Mm/Ml)
+    * tags contain ambiguity specification (? vs.)
+    * bam file contains the expected modifications (motif, mod code)
 
     Args:
         bam_file: a formatted .bam file with a .bai index
-        basemods: a list of base modification motifs
+        motifs: a list of base modification motifs
 
     Returns:
         None. If the function returns, you are ok.
@@ -650,6 +644,9 @@ def get_alignment_quality(
     bam_file,
     ref_genome,
 ) -> tuple[int, int]:
+    """
+    Determine fraction of read bases that line up with reference genome in first NUM_READS_TO_CHECK reads in bam file
+    """
     ref_genome_index = ref_genome.parent / (ref_genome.name + ".fai")
     if not ref_genome_index.exists():
         print(f"Indexing {ref_genome.name}. This only needs to be done once.")
@@ -684,13 +681,15 @@ def get_alignment_quality(
     return correct_bases, total_bases
 
 
-def create_region_specifier(
+def create_region_command_list(
     output_path,
     regions,
     window_size,
 ):
     """
-    Creates commands to pass to modkit based on bed_file regions.
+    Creates commands to pass to modkit for specifying genomic regions.
+
+    TODO: Split into two function? Convert to bed, then construct commands
     """
 
     if regions is not None:
@@ -716,28 +715,40 @@ def read_by_base_txt_to_hdf5(
     thresh: float | None = None,
     quiet: bool = False,
     compress_level: int = 1,
-    write_chunks: int = 1000,
+    chunk_size: int = 1000,
 ) -> None:
     """
     Takes in a txt file generated by modkit extract and appends
-    all the data from a specified basemod into an hdf5 file. If a thresh is specified, it
+    all the data from a specified motif into an hdf5 file. If a thresh is specified, it
     also binarizes the mod calls.
+
+    If the h5 file does not exist it will be created and datasets will be added for read_name,
+    chromosome, read_start, read_end, strand, motif, mod_vector, and val_vector.
+
+    All the datasets (exception threshold) are parallel arrays of length num_reads
+
+    Each read's position data is defined in genomic reference coordinates on the positive strand
+    (i.e. the read_start is the leftmost aligned position, read_end is the rightmost, vectors
+    are left to right along genomic coordinates)
+
+    TODO: Make a nice key:value map of the h5 file structure, make sure start and end are documented
+    as reconstructions NOT original cigarstring alignment info. mention pysam
 
     Args:
         input_txt: a string or Path pointing to a modkit extracted base-by-base modifications
             file. This file is assumed to have been created by modkit v0.2.4, other versions may
             have a different format and may not function normally.
         output_h5: a string or Path pointing to a valid place to save an .h5 file. If this
-            file already exists, it will not be cleared and will simply be appended to. If it does
-            not exist it will be created and datasets will be added for read_name, chromosome, read_start,
-            read_end, base modification motif, mod_vector, and val_vector.
-        basemod: a string specifying a single base modification. Basemods are specified as
-            {sequence_motif},{position_of_modification}. For example, a methylated adenine is specified
-            as 'A,0' and CpG methylation is specified as 'CG,0'.
+            file already exists, it will not be cleared and will simply be appended to.
+        motif: a string specifying a single base modification. Basemods are specified as
+            {sequence_motif},{position_of_modification},{optional mod_code}. For example,
+            a methylated adenine is specified as 'A,0' or 'A,0,a' and CpG methylation is
+            specified as 'CG,0' or 'CG,0,m'.
         thresh: a floating point threshold for base modification calling, between zero and one.
             If specified as None, raw probabilities will be saved in the .h5 output.
         quiet: if True, this suppresses outputs
         compress_level: gzip compression level for datasets, specifically for vectors for now
+        chunk_size: size of write chunks in reads
 
     Returns:
         None
@@ -758,25 +769,28 @@ def read_by_base_txt_to_hdf5(
     read_name = ""
     num_reads = 0
     # TODO: I think the function calls can be consolidated; lots of repetition
+    # TODO: Consider opening both files at once
     with input_txt.open() as txt:
-        for index, line in enumerate(txt):
+        # Check file length
+        for line_index, line in enumerate(txt):
             fields = line.split("\t")
-            if index > 0 and read_name != fields[0]:
+            if line_index > 0 and read_name != fields[0]:
                 read_name = fields[0]
                 num_reads += 1
-        num_lines = index
-        # print(f'{num_reads} reads found in {input_txt}')
+        num_lines = line_index
         txt.seek(0)
-        with h5py.File(output_h5, "a") as h5:
-            # Set dataset types
 
-            # metadata strings
+        with h5py.File(output_h5, "a") as h5:
+            ## Define hdf5 dataset types for later
             dt_str = h5py.string_dtype(encoding="utf-8")
             # mod and val vectors -> uint8 allows us to just write whatever bytes we want
             # h5py does not appear to otherwise support vlen binary
             dt_vlen = h5py.vlen_dtype(np.dtype("uint8"))
+
+            ## Format threshold value and create dataset to store whether this data is thresholded (binary) or raw (float16)
+            # TODO: should this method thresholding without binarization
+            # None becomes NaN
             threshold_to_store = np.nan if thresh is None else thresh
-            # Create a threshold dataset to store whether this data is thresholded (binary) or raw (float16)
             if "threshold" in h5:
                 threshold_from_existing = h5["threshold"][()]
                 if threshold_from_existing != threshold_to_store and not (
@@ -787,7 +801,9 @@ def read_by_base_txt_to_hdf5(
                     )
             else:
                 h5.create_dataset("threshold", data=threshold_to_store)
-            # Create metadata datasets
+
+            ## Create read metadata datasets
+            # TODO: loop through dict instead?
             if "read_name" in h5:
                 old_size = h5["read_name"].shape[0]
                 h5["read_name"].resize((old_size + num_reads,))
@@ -871,7 +887,9 @@ def read_by_base_txt_to_hdf5(
                     compression="gzip",
                     compression_opts=9,
                 )
-            # Create the vector datasets. These will contain raw bytes formatted into a uint8 array
+
+            ## Create the vector datasets. These will contain raw bytes formatted into a uint8 array
+            # TODO: loop through dict instead
             if "mod_vector" in h5:
                 if old_size != h5["mod_vector"].shape[0]:
                     print("size mismatch read_name:mod_vector")
@@ -901,35 +919,43 @@ def read_by_base_txt_to_hdf5(
                     # compression_opts=9,
                 )
 
-            #         next(txt)
-            # Initialize loop vars
+            ## Add data to datasets from txt file
+            # Initialize loop vars - these will go into datasets
+            # TODO: initialize read name to actual first read so we can get rid of the logic in the loop
             read_name = ""
             read_chrom = ""
             read_len = 0
             ref_strand = ""
             read_start = 0
             read_end = 0
-            val_coordinates_list: list[int] = []
+            valid_coordinates_list: list[int] = []
             mod_values_list: list[float] = []
 
+            # Count reads for batched write
             read_counter = 0
-            # TODO: This typing is correct, but maybe confusing? Is a defaultdict the best way to handle this, or should it be a more bespoke structure?
-            read_dict_of_lists: defaultdict[str, list[str | int]] = defaultdict(list)
+            # Keys (strings): dataset names, values: lists of dataset values by read; string or ints or arrays
+            # Contents reset at the end of each chunk, after writing to h5
+            chunk_datasets_contents: defaultdict[str, list[str | int | np.ndarray]] = (
+                defaultdict(list)
+            )
+            # TODO: replace in loop with read_counter%chunk_size as appropriate
             reads_in_chunk = 0
 
-            if quiet:
-                iterator = enumerate(txt)
-            else:
+            # Setting up progress bars if not in quiet mode
+            # Skip header
+            iterator = enumerate(txt)
+            next(iterator)
+            if not quiet:
                 iterator = tqdm(
-                    enumerate(txt),
-                    total=num_lines + 1,
+                    iterator,
+                    total=num_lines,
                     desc=f"Transferring {num_reads} from {input_txt.name} into {output_h5.name}, new size {old_size+num_reads}",
                     bar_format="{bar}| {desc} {percentage:3.0f}% | {elapsed}<{remaining}",
                 )
-            for index, line in iterator:
-                if index == 0:
-                    #                     print(line)
-                    continue
+
+            # Loop through txt file
+            for line_index, line in iterator:
+                # TODO: use csv module
                 fields = line.split("\t")
                 pos_in_genome = int(fields[2])
                 canonical_base = fields[15]
@@ -937,66 +963,78 @@ def read_by_base_txt_to_hdf5(
                 mod_code = fields[11]
 
                 if read_name != fields[0]:
-                    # Record the read details unless this is the first read
-                    if index > 1:
-                        if len(val_coordinates_list) > 0:
-                            read_len_along_ref = max(val_coordinates_list) + 1
+                    # Record the previous read details unless this is the first line
+                    if line_index > 1:
+                        # TODO: Replace this with read_end-read_start; this will pad vectors and require
+                        # regenerating test reference data
+                        if len(valid_coordinates_list) > 0:
+                            read_len_along_ref = max(valid_coordinates_list) + 1
                         else:
                             read_len_along_ref = read_len
+
+                        # Populate mod vector array appropriately based on thresh settings
                         mod_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
                         if thresh is None:
                             # We subtract 0.25 because in modkit they add 0.5, but our elements are zero when the
                             # base motif isn't present, so to get things to round to the right integers to match the
                             # original .bam file, subtracting 0.25 is good. Anything from 0.001 to 0.4999 would work I think
-                            mod_vector[val_coordinates_list] = np.rint(
+                            mod_vector[valid_coordinates_list] = np.rint(
                                 np.array(mod_values_list) * 256 - 0.25
                             ).astype(np.uint8)
                         else:
-                            mod_vector[val_coordinates_list] = np.array(
+                            mod_vector[valid_coordinates_list] = np.array(
                                 mod_values_list
                             ).astype(np.uint8)
-                        val_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
-                        val_vector[val_coordinates_list] = 1
-                        # Build mod_vector and val_vector from lists
-                        read_dict_of_lists["read_name"].append(read_name)
-                        read_dict_of_lists["chromosome"].append(read_chrom)
-                        read_dict_of_lists["read_start"].append(read_start)
-                        read_dict_of_lists["read_end"].append(read_end)
-                        read_dict_of_lists["strand"].append(ref_strand)
-                        read_dict_of_lists["motif"].append(motif)
-                        read_dict_of_lists["mod_vector"].append(
-                            np.frombuffer(
-                                gzip.compress(
-                                    mod_vector.tobytes(), compresslevel=compress_level
-                                ),
-                                dtype=np.uint8,
-                            )
+                        # TODO: consolidate compression into a function shared across
+                        mod_vector_compressed = np.frombuffer(
+                            gzip.compress(
+                                mod_vector.tobytes(), compresslevel=compress_level
+                            ),
+                            dtype=np.uint8,
                         )
-                        read_dict_of_lists["val_vector"].append(
-                            np.frombuffer(
-                                gzip.compress(
-                                    val_vector.tobytes(), compresslevel=compress_level
-                                ),
-                                dtype=np.uint8,
-                            )
+
+                        # Populate valid vector array
+                        valid_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
+                        valid_vector[valid_coordinates_list] = 1
+                        valid_vector_compressed = np.frombuffer(
+                            gzip.compress(
+                                valid_vector.tobytes(), compresslevel=compress_level
+                            ),
+                            dtype=np.uint8,
                         )
+
+                        chunk_datasets_contents["read_name"].append(read_name)
+                        chunk_datasets_contents["chromosome"].append(read_chrom)
+                        chunk_datasets_contents["read_start"].append(read_start)
+                        chunk_datasets_contents["read_end"].append(read_end)
+                        chunk_datasets_contents["strand"].append(ref_strand)
+                        chunk_datasets_contents["motif"].append(motif)
+                        chunk_datasets_contents["mod_vector"].append(
+                            mod_vector_compressed
+                        )
+                        chunk_datasets_contents["val_vector"].append(
+                            valid_vector_compressed
+                        )
+
+                        # Write chunk if enough reads have built up
                         reads_in_chunk += 1
-                        if reads_in_chunk >= write_chunks:
-                            for dataset, entry in read_dict_of_lists.items():
-                                h5[dataset][
-                                    old_size
-                                    + (read_counter // write_chunks)
-                                    * write_chunks : old_size + read_counter + 1
-                                ] = entry
-                            read_dict_of_lists = defaultdict(list)
+                        if reads_in_chunk >= chunk_size:
+                            for dataset, entry in chunk_datasets_contents.items():
+                                start_index = (
+                                    old_size + (read_counter // chunk_size) * chunk_size
+                                )
+                                end_index = old_size + read_counter + 1
+                                h5[dataset][start_index:end_index] = entry
+                            chunk_datasets_contents = defaultdict(list)
                             reads_in_chunk = 0
                         read_counter += 1
-                    # Set the read name of the next read
+
+                    ## Set up for next read
                     read_name = fields[0]
-                    # Store some relevant read metadata
                     read_chrom = fields[3]
                     read_len = int(fields[9])
                     ref_strand = fields[5]
+                    # TODO: verify that read position is in the right (ref) coordinate system
                     if ref_strand == "+":
                         pos_in_read_ref = int(fields[1])
                     elif ref_strand == "-":
@@ -1006,7 +1044,7 @@ def read_by_base_txt_to_hdf5(
                     read_end = read_start + read_len
                     # Instantiate lists
                     mod_values_list = []
-                    val_coordinates_list = []
+                    valid_coordinates_list = []
 
                 # Regardless of whether its a new read or not,
                 # add modification to vector if motif type is correct
@@ -1015,7 +1053,7 @@ def read_by_base_txt_to_hdf5(
                     canonical_base == parsed_motif.modified_base
                     and mod_code in parsed_motif.mod_codes
                 ):
-                    val_coordinates_list.append(pos_in_genome - read_start)
+                    valid_coordinates_list.append(pos_in_genome - read_start)
                     if thresh is None:
                         mod_values_list.append(prob)
                     elif prob >= thresh:
@@ -1024,57 +1062,54 @@ def read_by_base_txt_to_hdf5(
                         mod_values_list.append(0)
 
             # Save the last read
+            # TODO: try to consolidate
             if len(read_name) > 0:
                 # Build the vectors
-                if len(val_coordinates_list) > 0:
-                    read_len_along_ref = max(val_coordinates_list) + 1
+                if len(valid_coordinates_list) > 0:
+                    read_len_along_ref = max(valid_coordinates_list) + 1
                 else:
                     read_len_along_ref = read_len
+
+                # Populate mod vector array appropriately based on thresh settings
                 mod_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
                 if thresh is None:
                     # We subtract 0.25 because in modkit they add 0.5, but our elements are zero when the
                     # base motif isn't present, so to get things to round to the right integers to match the
                     # original .bam file, subtracting 0.25 is good. Anything from 0.001 to 0.4999 would work I think
-                    mod_vector[val_coordinates_list] = np.rint(
+                    mod_vector[valid_coordinates_list] = np.rint(
                         np.array(mod_values_list) * 256 - 0.25
                     ).astype(np.uint8)
                 else:
-                    mod_vector[val_coordinates_list] = np.array(mod_values_list).astype(
-                        np.uint8
-                    )
-                val_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
-                val_vector[val_coordinates_list] = 1
-                val_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
-                val_vector[val_coordinates_list] = 1
-                read_dict_of_lists["read_name"].append(read_name)
-                read_dict_of_lists["chromosome"].append(read_chrom)
-                read_dict_of_lists["read_start"].append(read_start)
-                read_dict_of_lists["read_end"].append(read_end)
-                read_dict_of_lists["strand"].append(ref_strand)
-                read_dict_of_lists["motif"].append(motif)
-                read_dict_of_lists["mod_vector"].append(
-                    np.frombuffer(
-                        gzip.compress(
-                            mod_vector.tobytes(), compresslevel=compress_level
-                        ),
-                        dtype=np.uint8,
-                    )
+                    mod_vector[valid_coordinates_list] = np.array(
+                        mod_values_list
+                    ).astype(np.uint8)
+                # TODO: consolidate compression into a function shared across
+                mod_vector_compressed = np.frombuffer(
+                    gzip.compress(mod_vector.tobytes(), compresslevel=compress_level),
+                    dtype=np.uint8,
                 )
-                read_dict_of_lists["val_vector"].append(
-                    np.frombuffer(
-                        gzip.compress(
-                            val_vector.tobytes(), compresslevel=compress_level
-                        ),
-                        dtype=np.uint8,
-                    )
+
+                # Populate valid vector array
+                valid_vector = np.zeros(read_len_along_ref, dtype=np.uint8)
+                valid_vector[valid_coordinates_list] = 1
+                valid_vector_compressed = np.frombuffer(
+                    gzip.compress(valid_vector.tobytes(), compresslevel=compress_level),
+                    dtype=np.uint8,
                 )
-                for dataset, entry in read_dict_of_lists.items():
-                    h5[dataset][
-                        old_size
-                        + (read_counter // write_chunks) * write_chunks : old_size
-                        + read_counter
-                        + 1
-                    ] = entry
+
+                chunk_datasets_contents["read_name"].append(read_name)
+                chunk_datasets_contents["chromosome"].append(read_chrom)
+                chunk_datasets_contents["read_start"].append(read_start)
+                chunk_datasets_contents["read_end"].append(read_end)
+                chunk_datasets_contents["strand"].append(ref_strand)
+                chunk_datasets_contents["motif"].append(motif)
+                chunk_datasets_contents["mod_vector"].append(mod_vector_compressed)
+                chunk_datasets_contents["val_vector"].append(valid_vector_compressed)
+
+                for dataset, entry in chunk_datasets_contents.items():
+                    start_index = old_size + (read_counter // chunk_size) * chunk_size
+                    end_index = old_size + read_counter + 1
+                    h5[dataset][start_index:end_index] = entry
                 read_counter += 1
     return
 
@@ -1086,7 +1121,7 @@ def sanitize_path_args(*args) -> tuple:
     return tuple(Path(f) if f is not None else f for f in args)
 
 
-def prep_outputs(
+def prep_output_directory(
     output_directory: Path | None,
     output_name: str,
     input_file: Path,
@@ -1096,6 +1131,7 @@ def prep_outputs(
     As a side effect, if files exist that match the requested outputs, they are deleted.
 
     TODO: Is it kind of silly that this takes in input_file? Maybe should take in some generic default parameter, or this default should be set outside this method?
+
     Args:
         output_directory: Path pointing to an output directory.
             If left as None, outputs will be stored in a new folder within the input
@@ -1118,6 +1154,7 @@ def prep_outputs(
     output_files = [output_path / file_name for file_name in output_file_names]
 
     # Ensure output path exists, and that any of the specified output files do not already exist (necessary for some outputs)
+    # Delete the files that do already exist
     output_path.mkdir(parents=True, exist_ok=True)
     for output_file in output_files:
         output_file.unlink(missing_ok=True)
