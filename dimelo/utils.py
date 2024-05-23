@@ -89,6 +89,13 @@ def regions_dict_from_input(
     regions: str | Path | list[str | Path] | None = None,
     window_size: int | None = None,
 ) -> dict:
+    """
+    Create a dictionary defining every region provided in the regions input
+        key: chromosome strings
+        value: lists of (start,end,strand)
+
+    TODO: Maybe this dict object should be a more codified type
+    """
     # TODO: Why is this declared out here, and not within add_region_to_dict? To my eye, that method should just return the fully-loaded dict.
     # I don't think this approach works because add_region_to_dict can be called many times; the regions parameter can be a single bed path / string OR many in a list
     regions_dict: defaultdict[str, list] = defaultdict(list)
