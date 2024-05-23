@@ -4,44 +4,49 @@ import numpy as np
 import pandas as pd
 import plotly
 
-from . import load_processed
-
-# TODO: add plotly to requirements, probably?
-# TODO: Need to add kaleido for image export: pip install kaleido
-# TODO: Should this be allowed to take in mutliple regions? I think no.
-# TODO: Should this method do saving, or just return a plotly object?
-
-DEFAULT_THRESH_A = 129
-DEFAULT_THRESH_C = 129
-DEFAULT_DOTSIZE = 4
-COLOR_A = "#053C5E"
-COLOR_C = "#BB4430"
+from . import load_processed, utils
 
 
 def plot_read_browser(
     mod_file_name: str | Path,
-    # regions: str | Path | list[str | Path],
-    region: str | Path,
+    region: str,
     motifs: list[str],
-    output_dir: str | Path,
-    interactive_output: bool = True,
-    static_formats: list[str] | None = None,
-    static_width: int = 1000,
-    static_height: int = 400,
-    # window_size: int | None = None,
-    # single_strand: bool = False,
+    thresh: int | float | None = None,
+    single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
-    **kwargs,
-) -> None:
-    # TODO: is it actually necessary for this to be coerced here? Or is it okay to pass it down?
-    mod_file_name = Path(mod_file_name)
-    output_dir = Path(output_dir)
+) -> plotly.graph_objs.Figure:
+    """
+    Plot base modifications on single reads in a high-quality, interactive-enabled fashion.
 
-    # TODO: Should this be allowed to pass down the window_size and single_strand options? Do those make sense for a browser?
+    This method returns a plotly Figure object, which can be used in a number of ways to view and save
+    the figure in different formats. To view the figure interactively (in a notebook or python script),
+    simply call the show() method of the returned Figure object. See the helper methods below for saving
+    figures.
+
+    Args:
+        mod_file_name: path to file containing modification data for single reads
+        region: region string specifying the region to plot
+        motifs: list of modifications to extract; expected to match mods available in the relevant mod_files
+        thresh: A modification calling threshold. While the browser always displays float probabilities, setting
+            this to a value will limit display to only modification events over the given threshold. Else, display
+            all modifications regardless of probability.
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        sort_by: ordered list for hierarchical sort; see load_processed.read_vectors_from_hdf5() for details
+
+    Returns:
+        plotly Figure object containing the plot
+
+    TODO: Should this be allowed to take in mutliple regions? I think no.
+    TODO: Should this take in kwargs and pass them to plotly somehow?
+    TODO: Improve color specification? User should be able to set their own colors.
+    TODO: Should this let the user set arbitrary thresholds for each motif individually?
+    """
     read_tuples, entry_labels, _ = load_processed.read_vectors_from_hdf5(
         file=mod_file_name,
         regions=region,
         motifs=motifs,
+        single_strand=single_strand,
         sort_by=sort_by,
         calculate_mod_fractions=False,
     )
@@ -83,14 +88,29 @@ def plot_read_browser(
         .rename(columns={"pos_vector": "pos", "prob_vector": "prob"})
     )
 
-    # TODO: I know there's an off by a little bit error here, but I don't care to fix it yet
     # Apply threshold to mod_event_df
-    # mod_event_df.drop(mod_eve)
-    thresh_float = DEFAULT_THRESH_A / 255
-    mod_event_df = mod_event_df[mod_event_df.prob > thresh_float]
+    if thresh is not None:
+        mod_event_df = mod_event_df[mod_event_df.prob > utils.adjust_threshold(thresh)]
+    else:
+        # Still need to filter out all values that are effectively 0, or the read bars cannot be seen
+        # TODO: This seems like the wrong place to be handling this.
+        mod_event_df = mod_event_df[mod_event_df.prob > utils.adjust_threshold(2)]
 
+    # Build final figure
+    # TODO: Enable setting some relevant parameters
+    chrom, (region_start, region_end, _) = utils.parse_region_string(
+        region=region, window_size=None
+    )
+    # TODO: Understand all of the options here; are they all as desired?
+    layout = plotly.graph_objs.Layout(
+        barmode="overlay",
+        title=chrom,
+        hovermode="closest",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(range=[region_start, region_end]),
+    )
     # TODO: I feel like there has to be a cleaner way to do this, maybe using plotly express, but I dont know and I'm just trying to get this done first. Lots of iterrows. Sad.
-    fig = plotly.graph_objects.Figure()
+    fig = plotly.graph_objects.Figure(layout=layout)
     for _, row in read_extent_df.iterrows():
         fig.add_trace(
             plotly.graph_objects.Scatter(
@@ -101,8 +121,6 @@ def plot_read_browser(
                 showlegend=False,
             )
         )
-    # TODO: This way of specifying color is very dumb.
-    color_specs = [["white", COLOR_A], ["white", COLOR_C]]
     for motif_idx, (motif, motif_df) in enumerate(mod_event_df.groupby("motif")):
         min_overall = motif_df["prob"].min()
         max_overall = motif_df["prob"].max()
@@ -113,10 +131,9 @@ def plot_read_browser(
                 mode="markers",
                 showlegend=False,
                 marker=dict(
-                    size=DEFAULT_DOTSIZE,
+                    size=4,
                     color=motif_df["prob"],
-                    # TODO: This way of specifying color is very dumb.
-                    colorscale=color_specs[motif_idx],
+                    colorscale=utils.DEFAULT_COLORSCALES[motif],
                     colorbar=dict(
                         title=f"{motif} probability",
                         titleside="right",
@@ -134,20 +151,66 @@ def plot_read_browser(
                 ),
             )
         )
-    fig.update_layout(
-        barmode="overlay",
-        title="test_title",
-        hovermode="closest",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
+    # fig.update_layout(
+    #     barmode="overlay",
+    #     title="test_title",
+    #     hovermode="closest",
+    #     plot_bgcolor="rgba(0,0,0,0)",
+    # )
 
-    # TODO: If this is going to write things, it really needs to have a better file naming scheme...
-    # Write static images
-    for fmt in static_formats:
+    return fig
+
+
+def save_static(
+    fig: plotly.graph_objs.Figure,
+    output_dir: str | Path,
+    output_basename: str,
+    format: str | list[str] = "pdf",
+    width: int = 1000,
+    height: int = 400,
+) -> None:
+    """
+    Helper function for saving static plot browser images.
+
+    Args:
+        fig: plotly figure to save
+        output_dir: directory in which to save images
+        output_basename: descriptive basename of output file (before file extension)
+        format: one or more valid output formats for plotly; for valid options, see
+            https://plotly.github.io/plotly.py-docs/generated/plotly.io.write_image.html
+        width: width of output image in pixels
+        height: height of output image in pixels
+    """
+    # sanitize and prep inputs
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+
+    if isinstance(format, str):
+        format = [format]
+
+    # write figures
+    for fmt in format:
         fig.write_image(
-            output_dir / f"read_browser.{fmt}", width=static_width, height=static_height
+            output_dir / f"{output_basename}.{fmt}", width=width, height=height
         )
 
-    # Write html
-    if interactive_output:
-        fig.write_html(output_dir / "read_browser.html", include_plotlyjs="cdn")
+
+def save_interactive(
+    fig: plotly.graph_objs.Figure,
+    output_dir: str | Path,
+    output_basename: str,
+) -> None:
+    """
+    Helper function for saving interactive plot browsers.
+
+    Args:
+        fig: plotly figure to save
+        output_dir: directory in which to save images
+        output_basename: descriptive basename of output file (before file extension)
+    """
+    # sanitize inputs
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+
+    # write figure
+    fig.write_html(output_dir / f"{output_basename}.html", include_plotlyjs="cdn")
