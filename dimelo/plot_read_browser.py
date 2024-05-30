@@ -71,9 +71,7 @@ def plot_read_browser(
 
     # assign reads y-axis values based on their unique names, preserving the pre-set order
     # TODO: I'm pretty sure that however I do this, there will possibly be an "overdrawing" problem if the same read shows up multiple times. Do I care? Will it be taken care of by dropping duplicates?
-    # TODO: There is probably a better way to do this. I investigated pd.Categorical, but couldn't figure out how to tell it to do it in the passed order.
-    # TODO: This downcasting warning is INCREDIBLY vague, and I can't tell if it's actually a problem in this case. I even tried following their instructions and it didn't fix anything. UGHHHHHHHHHH...
-    read_df["y_index"] = read_df.read_name.replace(
+    read_df["y_index"] = read_df.read_name.map(
         {k: v for v, k in enumerate(read_df.read_name.unique())}
     )
 
