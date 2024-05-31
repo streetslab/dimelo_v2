@@ -14,6 +14,7 @@ def plot_read_browser(
     thresh: int | float | None = None,
     single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
+    meta_sort: str | None = "full_extent",
 ) -> plotly.graph_objs.Figure:
     """
     Plot base modifications on single reads in a high-quality, interactive-enabled fashion.
@@ -32,7 +33,12 @@ def plot_read_browser(
             all modifications regardless of probability.
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
-        sort_by: ordered list for hierarchical sort; see load_processed.read_vectors_from_hdf5() for details
+        sort_by: ordered list for hierarchical sort; see load_processed.read_vectors_from_hdf5() for details.
+            Can also pass the argument "collapse" to allow multiple reads on single rows of the browser, for a
+            more condensed visualization. Note that "collapse" is mutually exclusive with all other sorting options,
+            and is only allowed to be passed as a single string option.
+        meta_sort: additional fine tuning option for read collapsing; ignored when sort_by is not "collapse"; see
+            collapse_rows() for details.
 
     Returns:
         plotly Figure object containing the plot
@@ -41,7 +47,16 @@ def plot_read_browser(
     TODO: Should this take in kwargs and pass them to plotly somehow?
     TODO: Improve color specification? User should be able to set their own colors.
     TODO: Should this let the user set arbitrary thresholds for each motif individually?
+    TODO: The way that "collapse" is specified is unintuitive and problematic; what if the user passes "collapse" as
+        an element in an array?
+    TODO: Is it worth having an option for meta-sorting of collapsed reads? It's here for now to enable testing.
     """
+    # If asked to collapse reads, set up the initial read sorting appropriately and prep for later
+    collapse = False
+    if sort_by == "collapse":
+        collapse = True
+        sort_by = "read_start"
+
     read_tuples, entry_labels, _ = load_processed.read_vectors_from_hdf5(
         file=mod_file_name,
         regions=region,
@@ -85,6 +100,11 @@ def plot_read_browser(
         .explode(["pos_vector", "prob_vector"])
         .rename(columns={"pos_vector": "pos", "prob_vector": "prob"})
     )
+
+    if collapse:
+        index_map = collapse_rows(read_extent_df, meta_sort=meta_sort)
+        read_extent_df["y_index"] = read_extent_df["y_index"].map(index_map)
+        mod_event_df["y_index"] = mod_event_df["y_index"].map(index_map)
 
     # Apply threshold to mod_event_df
     if thresh is not None:
@@ -149,14 +169,112 @@ def plot_read_browser(
                 ),
             )
         )
-    # fig.update_layout(
-    #     barmode="overlay",
-    #     title="test_title",
-    #     hovermode="closest",
-    #     plot_bgcolor="rgba(0,0,0,0)",
-    # )
 
     return fig
+
+
+def collapse_rows(
+    read_extent_df: pd.DataFrame,
+    minimum_gap: int = 20,
+    meta_sort: str | None = "full_extent",
+) -> pd.Series:
+    """
+    Takes a sorted dataframe of read extents and collapses reads onto a smaller number of rows.
+
+    The input dataframe is expected to be sorted in a sensible fashion and pre-indexed with a set of
+    unique index values. This method has been tailored for and verified using read_start pre-sorting.
+    Behavior using other starting sorts may be undefined.
+
+    Optionally, performs a "meta-sort" of the resulting rows. Current options work as follows:
+    * full_extent: sort by full extent of the covered reads in the row (max end - min start);
+        rows covering a larger region at the bottom
+    * covered_bases: sort by number of bases covered by reads in the row;
+        rows covering more bases at the bottom
+    * None: no meta-sorting
+
+    Returns a series that maps the original indices on to the final collapsed and meta-sorted indices.
+    This series can be applied to the original data by using the pd.Series.map() method.
+
+    Args:
+        read_extent_df: dataframe with the columns ["read_start", "read_end", "y_index"]
+        minimum_gap: minimum number of bases allowed between the end of one read and the beginning of
+            the next for the two reads to be placed on the same row
+        meta_sort: type of meta sorting to do; one of ["full_extent", "covered_bases", None]
+
+    Returns:
+        Series mapping original indices to meta indices
+
+    TODO: This could be improved by checking for overlaps on both ends of the seed read for each row.
+        This might allow other types of pre-sorting to work more effectively.
+    """
+    # Sentinel value for un-indexed reads is -1
+    collapsed_indices = -np.ones(len(read_extent_df), dtype=int)
+
+    # Collapse reads
+    curr_y_idx = 0
+    for seed_read_idx in range(len(read_extent_df)):
+        # If seed read has been indexed already, move on
+        if collapsed_indices[seed_read_idx] != -1:
+            continue
+        collapsed_indices[seed_read_idx] = curr_y_idx
+
+        # Add any other non-indexed reads that fit onto the current row
+        curr_row_end = read_extent_df.iloc[seed_read_idx]["read_end"]
+        for other_read_idx in range(seed_read_idx + 1, len(read_extent_df)):
+            # If other read has been indexed already, move on
+            if collapsed_indices[other_read_idx] != -1:
+                continue
+            # If other read fits onto the current row, index it
+            if (
+                read_extent_df.iloc[other_read_idx]["read_start"]
+                > curr_row_end + minimum_gap
+            ):
+                collapsed_indices[other_read_idx] = curr_y_idx
+                curr_row_end = read_extent_df.iloc[other_read_idx]["read_end"]
+
+        curr_y_idx += 1
+
+    # Series mapping original indices to collapsed indices
+    idx_map_orig2collapse = pd.Series(
+        collapsed_indices, index=read_extent_df["y_index"]
+    )
+
+    if meta_sort is not None:
+        # Perform meta-sorting
+        match meta_sort:
+            case "full_extent":
+                # sort by full extent of the covered reads in the row (max end - min start)
+                idx_map_meta2collapse = (
+                    read_extent_df.groupby(collapsed_indices)
+                    .apply(
+                        lambda row_group: row_group.read_end.max()
+                        - row_group.read_start.min()
+                    )
+                    .sort_values(ascending=False)
+                    .reset_index()["index"]
+                )
+            case "covered_bases":
+                # sort by number of bases covered by reads in the row
+                read_lengths = read_extent_df["read_end"] - read_extent_df["read_start"]
+                idx_map_meta2collapse = (
+                    read_lengths.groupby(collapsed_indices)
+                    .sum()
+                    .sort_values(ascending=False)
+                    .reset_index()["index"]
+                )
+            case _:
+                raise ValueError(f"Invalid meta sorting option: {meta_sort}")
+
+        # Series mapping collapsed indices to meta indices
+        idx_map_collapse2meta = pd.Series(
+            idx_map_meta2collapse.index.values, index=idx_map_meta2collapse
+        )
+
+        # Return Series mapping original indices to meta indices
+        return idx_map_orig2collapse.map(idx_map_collapse2meta)
+    else:
+        # Return Series mapping original indices to collapsed indices
+        return idx_map_orig2collapse
 
 
 def save_static(
