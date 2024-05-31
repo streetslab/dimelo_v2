@@ -93,10 +93,12 @@ def plot_read_browser(
     # TODO: Dropping duplicates should hide the "overdrawing" problem when reads are duplicated in the dataset. Is this a problem or the intended behavior?
     # Get two separate dataframes:
     # * represents the read extents, to draw the grey lines
-    read_extent_df = read_df[["read_start", "read_end", "y_index"]].drop_duplicates()
+    read_extent_df = read_df[
+        ["read_start", "read_end", "y_index", "read_name"]
+    ].drop_duplicates()
     # * represents the methylation events
     mod_event_df = (
-        read_df[["y_index", "motif", "pos_vector", "prob_vector"]]
+        read_df[["y_index", "read_name", "motif", "pos_vector", "prob_vector"]]
         .explode(["pos_vector", "prob_vector"])
         .rename(columns={"pos_vector": "pos", "prob_vector": "prob"})
     )
@@ -137,6 +139,8 @@ def plot_read_browser(
                 mode="lines",
                 line=dict(width=1, color="lightgrey"),
                 showlegend=False,
+                hoverinfo="text",
+                hovertext=row.read_name,
             )
         )
     for motif_idx, (motif, motif_df) in enumerate(mod_event_df.groupby("motif")):
@@ -148,6 +152,8 @@ def plot_read_browser(
                 y=motif_df["y_index"],
                 mode="markers",
                 showlegend=False,
+                hoverinfo="text",
+                hovertext=motif_df["read_name"],
                 marker=dict(
                     size=4,
                     color=motif_df["prob"],
