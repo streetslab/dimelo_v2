@@ -43,7 +43,6 @@ def plot_read_browser(
     Returns:
         plotly Figure object containing the plot
 
-    TODO: Should this be allowed to take in mutliple regions? I think no.
     TODO: Should this take in kwargs and pass them to plotly somehow?
     TODO: Improve color specification? User should be able to set their own colors.
     TODO: Should this let the user set arbitrary thresholds for each motif individually?
