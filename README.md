@@ -1,4 +1,5 @@
-# Introduction
+# dimelo 1.0
+## Introduction
 
 This branch is a beta version of a rebuilt-from-scratch dimelo package that is still in development. As of February 2024, exact functionality and function interfaces / parameters are not yet finalized. Final functionality and design will be in part driven by user feedback.
 
@@ -16,7 +17,7 @@ We support the same core pileup and single read extraction operations as the ori
 
 This README document contains installation instructions and documentation for various use cases. There is a [tutorial](#basic-use) jupyter notebook that will take you through the core functionality of the package step-by-step. For Google Colab, the notebook already contains the necessary code to set up and run `dimelo`, whereas for local operation you will first need to follow the [local install instructions](#local-install-via-conda). Be sure to check that your system meets our [specifications](#system-requirements).
 
-# Contents
+## Contents
 [1.0 Install Instructions](#Install-instructions)
 
 -[1.1 Local Install via Conda](#Local-Install-via-Conda)
