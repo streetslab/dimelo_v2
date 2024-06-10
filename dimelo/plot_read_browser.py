@@ -14,6 +14,7 @@ def plot_read_browser(
     thresh: int | float | None = None,
     single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
+    hover: bool = True,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
@@ -40,6 +41,7 @@ def plot_read_browser(
             Can also pass the argument "collapse" to allow multiple reads on single rows of the browser, for a
             more condensed visualization. Note that "collapse" is mutually exclusive with all other sorting options,
             and is only allowed to be passed as a single string option.
+        hover: if False, disables display of information on mouse hover
 
     Returns:
         plotly Figure object containing the plot
@@ -88,6 +90,7 @@ def plot_read_browser(
         chrom=chrom,
         region_start=region_start,
         region_end=region_end,
+        hover=hover,
         **kwargs,
     )
 
@@ -154,7 +157,7 @@ def format_browser_data(
 
 def collapse_rows(
     read_extent_df: pd.DataFrame,
-    minimum_gap: int = 20,
+    minimum_gap: int = 500,
     meta_sort: str | None = "full_extent",
 ) -> pd.Series:
     """
@@ -263,6 +266,7 @@ def make_browser_figure(
     chrom: str,
     region_start: int,
     region_end: int,
+    hover: bool = True,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
@@ -279,6 +283,7 @@ def make_browser_figure(
         chrom: chromosome of the region being browsed
         region_start: start position of the region being browsed
         region_end: end position of the region being browsed
+        hover: if False, disables display of information on mouse hover
 
     TODO: Think about how this interfaces with different types of initial sorting...
     TODO: Make it so that this method does NOT modify the input dataframe
@@ -353,6 +358,8 @@ def make_browser_figure(
                 ),
             )
         )
+    if not hover:
+        fig.update_layout(hovermode=False)
     return fig
 
 
