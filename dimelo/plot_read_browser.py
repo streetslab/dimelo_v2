@@ -14,7 +14,7 @@ def plot_read_browser(
     thresh: int | float | None = None,
     single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
-    meta_sort: str | None = "full_extent",
+    **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
     Plot base modifications on single reads in a high-quality, interactive-enabled fashion.
@@ -23,6 +23,9 @@ def plot_read_browser(
     the figure in different formats. To view the figure interactively (in a notebook or python script),
     simply call the show() method of the returned Figure object. See the helper methods below for saving
     figures.
+
+    Additional keyword arguments will be passed down to collapse_rows() if sort_by == "collapse". See that
+    method for details.
 
     Args:
         mod_file_name: path to file containing modification data for single reads
@@ -37,13 +40,10 @@ def plot_read_browser(
             Can also pass the argument "collapse" to allow multiple reads on single rows of the browser, for a
             more condensed visualization. Note that "collapse" is mutually exclusive with all other sorting options,
             and is only allowed to be passed as a single string option.
-        meta_sort: additional fine tuning option for read collapsing; ignored when sort_by is not "collapse"; see
-            collapse_rows() for details.
 
     Returns:
         plotly Figure object containing the plot
 
-    TODO: Should this take in kwargs and pass them to plotly somehow?
     TODO: Improve color specification? User should be able to set their own colors.
     TODO: Should this let the user set arbitrary thresholds for each motif individually?
     TODO: The way that "collapse" is specified is unintuitive and problematic; what if the user passes "collapse" as
@@ -85,10 +85,10 @@ def plot_read_browser(
         read_extent_df=read_extent_df,
         mod_event_df=mod_event_df,
         collapse=collapse,
-        meta_sort=meta_sort,
         chrom=chrom,
         region_start=region_start,
         region_end=region_end,
+        **kwargs,
     )
 
     return fig
@@ -260,21 +260,22 @@ def make_browser_figure(
     read_extent_df: pd.DataFrame,
     mod_event_df: pd.DataFrame,
     collapse: bool,
-    meta_sort: str,
     chrom: str,
     region_start: int,
     region_end: int,
+    **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
     Make a browser figure, using the provided pre-processed data
+
+    Additional keyword arguments will be passed down to collapse_rows() if collapse == True. See that
+    method for details.
 
     Args:
         read_extent_df: read extent dataframe from format_browser_data()
         mod_event_df: mod event dataframe from format_browser_data()
         collapse: if True, allows multiple reads on single rows of the browser for a more condensed
             visualization.
-        meta_sort: additional fine tuning option for read collapsing; ignored when collapse is False; see
-            collapse_rows() for details.
         chrom: chromosome of the region being browsed
         region_start: start position of the region being browsed
         region_end: end position of the region being browsed
@@ -284,7 +285,7 @@ def make_browser_figure(
     TODO: Should this method do the collapsing, or should this method require collapsing outside?
     """
     if collapse:
-        index_map = collapse_rows(read_extent_df, meta_sort=meta_sort)
+        index_map = collapse_rows(read_extent_df, **kwargs)
         read_extent_df["y_index"] = read_extent_df["y_index"].map(index_map)
         mod_event_df["y_index"] = mod_event_df["y_index"].map(index_map)
 
@@ -302,6 +303,7 @@ def make_browser_figure(
     # TODO: I feel like there has to be a cleaner way to do this, maybe using plotly express, but I dont know and I'm just trying to get this done first. Lots of iterrows. Sad.
     fig = plotly.graph_objects.Figure(layout=layout)
     for _, row in read_extent_df.iterrows():
+        # TODO: How can I get the hover information for the reads to match the ones for the mod events? Not sure how to get customdata and hovertemplate working here.
         fig.add_trace(
             plotly.graph_objects.Scatter(
                 x=[row.read_start, row.read_end],
@@ -322,8 +324,14 @@ def make_browser_figure(
                 y=motif_df["y_index"],
                 mode="markers",
                 showlegend=False,
-                hoverinfo="text",
-                hovertext=motif_df["read_name"],
+                customdata=motif_df[["read_name", "prob"]],
+                hovertemplate="<br>".join(
+                    [
+                        "<b>Read</b>: %{customdata[0]}",
+                        "<b>Position</b>: %{x:,}",
+                        "<b>Probability</b>: %{customdata[1]:.2f}",
+                    ]
+                ),
                 marker=dict(
                     size=4,
                     color=motif_df["prob"],
