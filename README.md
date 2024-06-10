@@ -1,4 +1,4 @@
-# dimelo 1.0 beta
+# dimelo 0.2.0 beta
 ## Introduction
 
 This branch is a beta version of a rebuilt-from-scratch dimelo package that is still in development. As of February 2024, exact functionality and function interfaces / parameters are not yet finalized. Final functionality and design will be in part driven by user feedback.
