@@ -22,5 +22,7 @@ setup(
         #    some intermediate versions work too.
         # On the Berkeley High Performance Computing Cluster, Savio, I needed to install ipywidgets==7.6.5 for jupyter Open On-Demand.
         "tqdm",
+        "plotly",
+        "kaleido",
     ],
 )

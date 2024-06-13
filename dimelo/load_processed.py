@@ -572,7 +572,7 @@ def readwise_binary_modification_arrays(
         read_start_index = datasets.index("read_start")
         region_strand_index = datasets.index("region_strand")
 
-        # Check that this .h5 file was created with a threshold, i.e. that the mod calls are binarized
+        # Check this .h5 file was created with a threshold, i.e. that the mod calls are binarized
         if thresh is None:
             if not (sorted_read_data_converted[0][mod_vector_index].dtype == np.bool_):
                 raise ValueError(

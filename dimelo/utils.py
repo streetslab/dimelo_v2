@@ -17,6 +17,7 @@ BASEMOD_NAMES_DICT.update(
     }
 )
 
+# Default colors for seaborn plots
 DEFAULT_COLORS = defaultdict(lambda: "grey")
 DEFAULT_COLORS.update(
     {
@@ -28,6 +29,9 @@ DEFAULT_COLORS.update(
         "GCH,1": "purple",
     }
 )
+# Default colorscales for plotly; based off of DEFAULT_COLORS
+DEFAULT_COLORSCALES = defaultdict(lambda: ["white", "grey"])
+DEFAULT_COLORSCALES.update([(k, ["white", v]) for k, v in DEFAULT_COLORS.items()])
 
 
 class ParsedMotif:
@@ -177,23 +181,41 @@ def add_region_to_dict(
         and len(region.split(":")) == 2
         and 2 <= len(region.split(":")[1].split("-")) <= 3
     ):
-        # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
-        region_coords = region.split(",")
-        # The default strand is ., which is neither strand
-        strand = region_coords[1] if len(region_coords) > 1 else "."
-        chrom, coords = region_coords[0].split(":")
-        start, end = map(int, coords.split("-"))
-        if window_size is None:
-            regions_dict[chrom].append((start, end, strand))
-        else:
-            center_coord = (start + end) // 2
-            regions_dict[chrom].append(
-                (center_coord - window_size, center_coord + window_size, strand)
-            )
+        chrom, (start, end, strand) = parse_region_string(
+            region=region, window_size=window_size
+        )
+        regions_dict[chrom].append((start, end, strand))
     else:
         raise ValueError(
             f"Invalid regions {type(region)}: {region}. Please use the format chrX:XXX-XXX,strand."
         )
+
+
+def parse_region_string(
+    region: str,
+    window_size: int | None,
+) -> tuple[str, tuple[int, int, str]]:
+    """
+    Parse a region specification string into its component parts.
+
+    Args:
+        region: a region string of the format chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
+        window_size: if present, returns a window of this size around the center of the given region
+
+    Returns:
+        chromosome, (start_pos, end_pos, strand)
+    """
+    # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
+    region_coords = region.split(",")
+    # The default strand is ., which is neither strand
+    strand = region_coords[1] if len(region_coords) > 1 else "."
+    chrom, coords = region_coords[0].split(":")
+    start, end = map(int, coords.split("-"))
+    if window_size is None:
+        return chrom, (start, end, strand)
+    else:
+        center_coord = (start + end) // 2
+        return chrom, (center_coord - window_size, center_coord + window_size, strand)
 
 
 def bed_from_regions_dict(
