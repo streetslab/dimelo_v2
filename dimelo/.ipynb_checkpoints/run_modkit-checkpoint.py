@@ -186,11 +186,9 @@ def run_with_progress_bars(
                     break  # Handle errors - or just don't!
         process.wait()
         return_code = process.returncode
-        if return_code != 0:
+        if return_code!=0:
             # error_message = f"Process exited with return code {return_code}"
-            raise subprocess.CalledProcessError(
-                return_code, command_list, output=buffer_bytes
-            )
+            raise subprocess.CalledProcessError(return_code, command_list, output=buffer_bytes)
         else:
             return ""
     # Grab output bytes as they come
@@ -356,15 +354,14 @@ def run_with_progress_bars(
                 break  # Handle errors - or just don't!
     process.wait()
     return_code = process.returncode
-    if return_code != 0 or err_flag:
+    if return_code!=0 or err_flag:
+        
         # system_message = f"modkit exited with return code {return_code}"
         # if err_flag:
         #     error_message = system_message+'\nlast state: '+tail_buffer
         # else:
         #     error_message = system_message
-        raise subprocess.CalledProcessError(
-            return_code, command_list, output=buffer_bytes
-        )
+        raise subprocess.CalledProcessError(return_code, command_list, output=buffer_bytes)
 
     elif done_flag or not expect_done:
         try:
