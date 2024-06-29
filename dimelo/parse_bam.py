@@ -670,13 +670,16 @@ def get_alignment_quality(
         # get_aligned_pairs returns a list of (read_coord,ref_coord) pairs with None values when not aligned
         # So if we just skip Nones and compare the remainder it'll tell us the accuracy
 
-        for pos_in_read, pos_in_ref in read.get_aligned_pairs():
-            if pos_in_read is not None and pos_in_ref is not None:
-                total_bases += 1
-                if read_sequence[pos_in_read] == str(
-                    genome_fasta.fetch(read.reference_name, pos_in_ref, pos_in_ref + 1)
-                ):
-                    correct_bases += 1
+        if read_sequence is not None:
+            for pos_in_read, pos_in_ref in read.get_aligned_pairs():
+                if pos_in_read is not None and pos_in_ref is not None:
+                    total_bases += 1
+                    if read_sequence[pos_in_read] == str(
+                        genome_fasta.fetch(
+                            read.reference_name, pos_in_ref, pos_in_ref + 1
+                        )
+                    ):
+                        correct_bases += 1
 
     return correct_bases, total_bases
 
