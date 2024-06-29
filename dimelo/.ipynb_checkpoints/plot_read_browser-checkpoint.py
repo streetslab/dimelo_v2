@@ -142,7 +142,7 @@ def format_browser_data(
     # TODO: Dropping duplicates should hide the "overdrawing" problem when reads are duplicated in the dataset. Is this a problem or the intended behavior?
     # Get two separate dataframes:
     # * represents the read extents, to draw the grey lines
-
+    
     # Added the read_name subsetting to avoid an index mapping error in make_browser_figure
     # caused by the read metadata for the same read with different motifs having slight
     # start and end offsets in some cases, when using Dorado or PacBio data. These 1-5bp
@@ -151,7 +151,7 @@ def format_browser_data(
     # which then cause non-unique indices for mapping in collapse mode
     read_extent_df = read_df[
         ["read_start", "read_end", "y_index", "read_name"]
-    ].drop_duplicates(subset=["read_name"])
+    ].drop_duplicates(subset=['read_name'])
     # * represents the methylation events
     mod_event_df = (
         read_df[["y_index", "read_name", "motif", "pos_vector", "prob_vector"]]
