@@ -106,7 +106,7 @@ def run_with_progress_bars(
         The command line stderr output string after the point where we detect modkit is done parsing
     """
 
-    # Set up progress bar variables
+    # Set up progress bar variables to display progress updates when not in quiet mode
     format_pre = "{bar}| {desc} {percentage:3.0f}% | {elapsed}"
     format_contigs = "{bar}| {desc} {percentage:3.0f}% | {elapsed}<{remaining}"
     format_chr = "{bar}| {desc} {percentage:3.0f}%"
@@ -119,18 +119,18 @@ def run_with_progress_bars(
     in_contig_progress = (0, 1)
     total_contigs = 0
 
-    # Set up output buffer variables
+    # Set up output buffer variables to capture modkit output
     buffer_bytes = bytearray()
     tail_buffer = ""
 
-    # Set up flags
+    # Set up flags for modkit error / modkit done from text outputs
     err_flag = False
     done_flag = False
 
-    # Create a pseudo-terminal
+    # Create a pseudo-terminal in which to run the modkit subprocess
     master_fd, slave_fd = pty.openpty()
 
-    # Start subprocess with the slave end as stdio
+    # Start modkit subprocess with the slave end as stdio
     process = subprocess.Popen(
         command_list,
         stdin=slave_fd,
@@ -139,12 +139,14 @@ def run_with_progress_bars(
         close_fds=True,
     )
     os.close(slave_fd)
-    # Grab output bytes as they come
+
     readout_count = 0
     progress_bars_initialized = False
     region_parsing_started = False
 
+    # Grab output bytes for as long as they're coming
     while True:
+        # Wait for the process to be ready to provide bytes
         ready, _, _ = select.select([master_fd], [], [], 0.1)
         if ready:
             try:
@@ -154,8 +156,10 @@ def run_with_progress_bars(
                     break  # No more data
 
                 if quiet:
+                    # If we are in quiet mode, nothing gets grabbed
                     continue
                 else:
+                    # Create the progress bars when first entering this code block
                     if not progress_bars_initialized:
                         pbar_pre = tqdm(
                             total=100,
@@ -178,10 +182,12 @@ def run_with_progress_bars(
 
                     try:
                         # Try to decode the accumulated bytes
+                        # This will throw a UnicodeDecodeError if not complete, which is ok! Then we just continue on
                         text = buffer_bytes.decode("utf-8")
                         readout_count += 1
                         buffer_bytes.clear()  # Clear the buffer after successful decoding
-                        # If we have hit an error or modkit is done, just accumulate the rest of the output and then deal with it
+                        # If we have hit an error or modkit is done, just accumulate the rest of the output and then deal with it:
+                        # no need to check the progress tracking stuff in that case
                         if err_flag or done_flag:
                             tail_buffer += text
                         # If we haven't hit an error or a done state, first check for that
@@ -197,127 +203,29 @@ def run_with_progress_bars(
                                 done_flag = True
                             # If the process is ongoing, then go through the possible cases and create/adjust pbars accordingly
                             # We only sometimes want to update progress because otherwise the constant updates slow us down
-                            elif readout_count % progress_granularity == 0:
-                                # We check these in the reverse order from that in which they occur, which I guess will save a tiny
-                                # amount of processing time because we don't check for previous steps when on later steps
-                                # Once we are in the contig progress stage, step 1 is done by definition
-                                if progress_bars_initialized and (
-                                    contigs_progress_matches := re.search(
-                                        contigs_progress_regex, tail_buffer
+                            elif (
+                                readout_count % progress_granularity == 0
+                                and progress_bars_initialized
+                            ):
+                                region_parsing_started, in_contig_progress = (
+                                    update_progress_bars(
+                                        pbar_pre=pbar_pre,
+                                        pbar_contigs=pbar_contigs,
+                                        pbar_chr=pbar_chr,
+                                        tail_buffer=tail_buffer,
+                                        contigs_progress_regex=contigs_progress_regex,
+                                        single_contig_regex=single_contig_regex,
+                                        find_motifs_regex=find_motifs_regex,
+                                        load_fasta_regex=load_fasta_regex,
+                                        region_parsing_started=region_parsing_started,
+                                        in_contig_progress=in_contig_progress,
+                                        finding_progress_dict=finding_progress_dict,
+                                        ref_genome=ref_genome,
+                                        input_file=input_file,
+                                        motifs=motifs,
                                     )
-                                ):
-                                    # If we get here we can be sure the pbars are initialized
-                                    pbar_pre = cast(tqdm, pbar_pre)
-                                    pbar_contigs = cast(tqdm, pbar_contigs)
-                                    if not region_parsing_started:
-                                        # These are now no longer indicating future steps, but rather counting the actual
-                                        # time for step 2
-                                        pbar_contigs.reset()
-                                        pbar_chr.reset()
-                                        region_parsing_started = True
-                                        # Now that region parsing has started, we can close out the preprocessing pbar
-                                        pbar_pre.n = 100
-                                        pbar_pre.set_description(
-                                            f"Step 1 complete. Located {motifs} in {ref_genome.name}"
-                                        )
-                                        pbar_pre.refresh()
-                                        pbar_pre.close()
-                                    # This progress bar tracks how many contigs/chromosomes have been processed
-                                    current_contig = int(
-                                        contigs_progress_matches.group(1)
-                                    )
-                                    total_contigs = int(
-                                        contigs_progress_matches.group(2)
-                                    )
-                                    pbar_contigs.n = (
-                                        (
-                                            100
-                                            * (
-                                                current_contig
-                                                + (
-                                                    in_contig_progress[0]
-                                                    / in_contig_progress[1]
-                                                    if in_contig_progress[1] > 0
-                                                    else 0
-                                                )
-                                            )
-                                        )
-                                        / total_contigs
-                                        if total_contigs > 0
-                                        else 0
-                                    )
-                                    pbar_contigs.set_description(
-                                        f"Step 2: parsing {current_contig}/{total_contigs} from {input_file.name}"
-                                    )
-                                    pbar_contigs.refresh()
-                                elif (
-                                    progress_bars_initialized
-                                    and region_parsing_started
-                                    and (
-                                        single_contig_matches := re.search(
-                                            single_contig_regex, tail_buffer
-                                        )
-                                    )
-                                ):
-                                    # If we get here we can be sure the pbars are initialized
-                                    pbar_chr = cast(tqdm, pbar_chr)
-                                    # This progress bar tracks reads processed within a chromosomes
-                                    chromosome = single_contig_matches.group(3)
-                                    reads_done = int(single_contig_matches.group(1))
-                                    reads_total = int(single_contig_matches.group(2))
-                                    pbar_chr.n = (
-                                        100 * reads_done / reads_total
-                                        if reads_total > 0
-                                        else 0
-                                    )
-                                    in_contig_progress = (reads_done, reads_total)
-                                    pbar_chr.set_description(
-                                        f"Step 2: {chromosome} {reads_done}/{reads_total} chunks processed"
-                                    )
-                                    pbar_chr.refresh()
+                                )
 
-                                elif progress_bars_initialized and (
-                                    find_motifs_matches := re.search(
-                                        find_motifs_regex, tail_buffer
-                                    )
-                                ):
-                                    # If we get here we can be sure the pbars are initialized
-                                    pbar_pre = cast(tqdm, pbar_pre)
-                                    finding_progress_dict[
-                                        find_motifs_matches.group(3)
-                                    ] = (
-                                        int(find_motifs_matches.group(1)),
-                                        int(find_motifs_matches.group(2)),
-                                    )
-                                    num_sum, denom_sum = 0, 0
-                                    for (
-                                        num,
-                                        denom,
-                                    ) in finding_progress_dict.values():
-                                        num_sum += num
-                                        denom_sum += denom
-                                    if denom_sum > 0:
-                                        pbar_pre.n = 100 * num_sum / denom_sum
-                                    else:
-                                        pbar_pre.n = 0
-                                    pbar_pre.set_description(
-                                        f"Step 1b: finding motif(s) {motifs}"
-                                    )
-                                    pbar_pre.refresh()
-                                elif progress_bars_initialized and (
-                                    load_fasta_match := re.search(
-                                        load_fasta_regex, tail_buffer
-                                    )
-                                ):
-                                    # If we get here we can be sure the pbars are initialized
-                                    pbar_pre = cast(tqdm, pbar_pre)
-                                    pbar_pre.n = (
-                                        100 * int(load_fasta_match.group(1)) / 24
-                                    )
-                                    pbar_pre.set_description(
-                                        f"Step 1a: reading {ref_genome.name}"
-                                    )
-                                    pbar_pre.refresh()
                     except UnicodeDecodeError:
                         # If decoding fails, continue accumulating bytes
                         continue
@@ -325,13 +233,22 @@ def run_with_progress_bars(
                         raise e
             except OSError:
                 break
+
+    # After the data stops coming, we wait until the process is done so we can grab the return code
     process.wait()
     return_code = process.returncode
+    # Modkit gives return code 0 if it terminates successfully; any other return code should be raised
+    # This catches system kills caused by memory and disk space
     if return_code != 0 or err_flag:
         raise subprocess.CalledProcessError(
             return_code, command_list, output=tail_buffer
         )
 
+    # If modkit gives return code 0, it can still have had an unusual state.
+    # If the expected done flag was seen, or if the command doesn't have a done
+    # string (i.e. extract), update the progress bars to reflect the final status
+    # If the progress bars are not initialized, then the code must have been run in
+    # quiet mode
     elif done_flag or not expect_done:
         if progress_bars_initialized:
             pbar_pre = cast(tqdm, pbar_pre)
@@ -358,6 +275,7 @@ def run_with_progress_bars(
             pbar_chr.refresh()
             pbar_chr.close()
         return tail_buffer
+    # Indicate unusual state
     else:
         if progress_bars_initialized:
             pbar_pre = cast(tqdm, pbar_pre)
@@ -380,3 +298,107 @@ def run_with_progress_bars(
             'WARNING: the modkit command may not have completed normally. Consider re-running with "log=True" if you do not get the expected outputs.'
         )
         return tail_buffer
+
+
+def update_progress_bars(
+    pbar_pre,
+    pbar_contigs,
+    pbar_chr,
+    tail_buffer,
+    contigs_progress_regex,
+    single_contig_regex,
+    find_motifs_regex,
+    load_fasta_regex,
+    region_parsing_started,
+    in_contig_progress,
+    finding_progress_dict,
+    ref_genome,
+    input_file,
+    motifs,
+):
+    # We check these in the reverse order from that in which they occur, which I guess will save a tiny
+    # amount of processing time because we don't check for previous steps when on later steps
+    # Once we are in the contig progress stage, step 1 is done by definition
+    if contigs_progress_matches := re.search(contigs_progress_regex, tail_buffer):
+        # If we get here we can be sure the pbars are initialized
+        pbar_pre = cast(tqdm, pbar_pre)
+        pbar_contigs = cast(tqdm, pbar_contigs)
+        if not region_parsing_started:
+            # These are now no longer indicating future steps, but rather counting the actual
+            # time for step 2
+            pbar_contigs.reset()
+            pbar_chr.reset()
+            region_parsing_started = True
+            # Now that region parsing has started, we can close out the preprocessing pbar
+            pbar_pre.n = 100
+            pbar_pre.set_description(
+                f"Step 1 complete. Located {motifs} in {ref_genome.name}"
+            )
+            pbar_pre.refresh()
+            pbar_pre.close()
+        # This progress bar tracks how many contigs/chromosomes have been processed
+        current_contig = int(contigs_progress_matches.group(1))
+        total_contigs = int(contigs_progress_matches.group(2))
+        pbar_contigs.n = (
+            (
+                100
+                * (
+                    current_contig
+                    + (
+                        in_contig_progress[0] / in_contig_progress[1]
+                        if in_contig_progress[1] > 0
+                        else 0
+                    )
+                )
+            )
+            / total_contigs
+            if total_contigs > 0
+            else 0
+        )
+        pbar_contigs.set_description(
+            f"Step 2: parsing {current_contig}/{total_contigs} from {input_file.name}"
+        )
+        pbar_contigs.refresh()
+    elif region_parsing_started and (
+        single_contig_matches := re.search(single_contig_regex, tail_buffer)
+    ):
+        # If we get here we can be sure the pbars are initialized
+        pbar_chr = cast(tqdm, pbar_chr)
+        # This progress bar tracks reads processed within a chromosomes
+        chromosome = single_contig_matches.group(3)
+        reads_done = int(single_contig_matches.group(1))
+        reads_total = int(single_contig_matches.group(2))
+        pbar_chr.n = 100 * reads_done / reads_total if reads_total > 0 else 0
+        in_contig_progress = (reads_done, reads_total)
+        pbar_chr.set_description(
+            f"Step 2: {chromosome} {reads_done}/{reads_total} chunks processed"
+        )
+        pbar_chr.refresh()
+
+    elif find_motifs_matches := re.search(find_motifs_regex, tail_buffer):
+        # If we get here we can be sure the pbars are initialized
+        pbar_pre = cast(tqdm, pbar_pre)
+        finding_progress_dict[find_motifs_matches.group(3)] = (
+            int(find_motifs_matches.group(1)),
+            int(find_motifs_matches.group(2)),
+        )
+        num_sum, denom_sum = 0, 0
+        for (
+            num,
+            denom,
+        ) in finding_progress_dict.values():
+            num_sum += num
+            denom_sum += denom
+        if denom_sum > 0:
+            pbar_pre.n = 100 * num_sum / denom_sum
+        else:
+            pbar_pre.n = 0
+        pbar_pre.set_description(f"Step 1b: finding motif(s) {motifs}")
+        pbar_pre.refresh()
+    elif load_fasta_match := re.search(load_fasta_regex, tail_buffer):
+        # If we get here we can be sure the pbars are initialized
+        pbar_pre = cast(tqdm, pbar_pre)
+        pbar_pre.n = 100 * int(load_fasta_match.group(1)) / 24
+        pbar_pre.set_description(f"Step 1a: reading {ref_genome.name}")
+        pbar_pre.refresh()
+    return region_parsing_started, in_contig_progress
