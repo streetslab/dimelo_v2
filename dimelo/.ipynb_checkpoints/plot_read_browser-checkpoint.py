@@ -66,6 +66,13 @@ def plot_read_browser(
         sort_by=sort_by,
         calculate_mod_fractions=False,
     )
+    
+    mod_vector_index = entry_labels.index("mod_vector")
+    
+    if (read_tuples[0][mod_vector_index].dtype == np.bool_):
+        raise ValueError(
+            "A threshold has been applied to this .h5 single read data. plot_read_browser must be used with an .h5 file extracted using thresh=None."
+        )
 
     read_extent_df, mod_event_df = format_browser_data(
         read_tuples=read_tuples, entry_labels=entry_labels
@@ -142,7 +149,7 @@ def format_browser_data(
     # TODO: Dropping duplicates should hide the "overdrawing" problem when reads are duplicated in the dataset. Is this a problem or the intended behavior?
     # Get two separate dataframes:
     # * represents the read extents, to draw the grey lines
-    
+
     # Added the read_name subsetting to avoid an index mapping error in make_browser_figure
     # caused by the read metadata for the same read with different motifs having slight
     # start and end offsets in some cases, when using Dorado or PacBio data. These 1-5bp
@@ -151,7 +158,7 @@ def format_browser_data(
     # which then cause non-unique indices for mapping in collapse mode
     read_extent_df = read_df[
         ["read_start", "read_end", "y_index", "read_name"]
-    ].drop_duplicates(subset=['read_name'])
+    ].drop_duplicates(subset=["read_name"])
     # * represents the methylation events
     mod_event_df = (
         read_df[["y_index", "read_name", "motif", "pos_vector", "prob_vector"]]

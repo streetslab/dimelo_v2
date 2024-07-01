@@ -67,6 +67,13 @@ def plot_read_browser(
         calculate_mod_fractions=False,
     )
 
+    mod_vector_index = entry_labels.index("mod_vector")
+
+    if read_tuples[0][mod_vector_index].dtype == np.bool_:
+        raise ValueError(
+            "A threshold has been applied to this .h5 single read data. plot_read_browser must be used with an .h5 file extracted using thresh=None."
+        )
+
     read_extent_df, mod_event_df = format_browser_data(
         read_tuples=read_tuples, entry_labels=entry_labels
     )
