@@ -106,6 +106,13 @@ def run_with_progress_bars(
         The command line stderr output string after the point where we detect modkit is done parsing
     """
 
+    # modkit 0.2.4 does not like gzipped or bgzipped fasta files
+    with open(ref_genome, "rb") as f:
+        if f.read(2) == b"\x1f\x8b":
+            raise ValueError(
+                f"{ref_genome.name} is gzipped, which will cause modkit to fail.\ngunzip {ref_genome.name} and try again."
+            )
+
     # Set up progress bar variables to display progress updates when not in quiet mode
     format_pre = "{bar}| {desc} {percentage:3.0f}% | {elapsed}"
     format_contigs = "{bar}| {desc} {percentage:3.0f}% | {elapsed}<{remaining}"
@@ -240,6 +247,16 @@ def run_with_progress_bars(
     # Modkit gives return code 0 if it terminates successfully; any other return code should be raised
     # This catches system kills caused by memory and disk space
     if return_code != 0 or err_flag:
+        if err_flag:
+            print(tail_buffer)
+        if return_code == -9:
+            print(
+                "It looks like the process was killed with SIGKILL. This is often due to the system running out of memory.",
+                "\nConsider setting 'cores=1' to reduce resource usage or reducing the data size being processed.",
+                "\nNote that pileup and extract both create large intermediate plain-text files before reducing down to a compressed and indexed format.",
+                "\nRunning out of disk space can indirectly cause memory issues."
+                "\nYou might also want to check if there are any resource limits set for your user or in the environment where the code is running.",
+            )
         raise subprocess.CalledProcessError(
             return_code, command_list, output=tail_buffer
         )
