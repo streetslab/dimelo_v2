@@ -669,6 +669,10 @@ def get_alignment_quality(
 
         # get_aligned_pairs returns a list of (read_coord,ref_coord) pairs with None values when not aligned
         # So if we just skip Nones and compare the remainder it'll tell us the accuracy
+        # (in Dorado-basecalled r10 files, as of July 2024, we observe some fraction of reads
+        # with empty read_sequence, despite having intact tags and alignment info. the reason
+        # for this isn't currentyl known, but with this None check we avoid errors in this alignment
+        # checking stage.)
 
         if read_sequence is not None:
             for pos_in_read, pos_in_ref in read.get_aligned_pairs():
