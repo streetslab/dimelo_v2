@@ -15,6 +15,7 @@ def plot_read_browser(
     single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
     hover: bool = True,
+    marker_size: int = 4,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
@@ -98,6 +99,7 @@ def plot_read_browser(
         region_start=region_start,
         region_end=region_end,
         hover=hover,
+        marker_size=marker_size,
         **kwargs,
     )
 
@@ -281,6 +283,7 @@ def make_browser_figure(
     region_start: int,
     region_end: int,
     hover: bool = True,
+    marker_size: int = 4,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
@@ -303,6 +306,7 @@ def make_browser_figure(
     TODO: Make it so that this method does NOT modify the input dataframe
     TODO: Should this method do the collapsing, or should this method require collapsing outside?
     """
+
     if collapse:
         index_map = collapse_rows(read_extent_df, **kwargs)
         read_extent_df["y_index"] = read_extent_df["y_index"].map(index_map)
@@ -352,7 +356,7 @@ def make_browser_figure(
                     ]
                 ),
                 marker=dict(
-                    size=4,
+                    size=marker_size,
                     color=motif_df["prob"],
                     colorscale=utils.DEFAULT_COLORSCALES[motif],
                     colorbar=dict(
