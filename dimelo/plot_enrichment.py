@@ -23,9 +23,6 @@ def plot_enrichment(
     This is the most flexible method for enrichment plotting. For most use cases, consider
     using one of the plot_enrichment.by_* methods.
 
-    TODO: I feel like this should be able to take in data directly as vectors/other datatypes, not just read from files.
-    TODO: Style-wise, is it cleaner to have it be a match statement or calling a method from a global dict? Cleaner here with a dict, cleaner overall with the match statements?
-
     Args:
         mod_file_names: list of paths to modified base pileup data files
         bed_file_names: list of paths to bed files specifying regions to extract
@@ -151,6 +148,9 @@ def get_enrichments(
 
     This helper function can be useful during plot prototyping, when repeatedly building plots from the same data.
     Its outputs can be passed as the first argument to make_enrichment_plot().
+
+    TODO: I feel like this should be able to take in data directly as vectors/other datatypes, not just read from files.
+    TODO: Style-wise, is it cleaner to have it be a match statement or calling a method from a global dict? Cleaner here with a dict, cleaner overall with the match statements?
 
     Args:
         mod_file_names: list of paths to modified base pileup data files

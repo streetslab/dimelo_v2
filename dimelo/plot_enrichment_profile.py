@@ -26,8 +26,6 @@ def plot_enrichment_profile(
     This is the most flexible method for enrichment profile plotting. For most use cases, consider
     using one of the plot_enrichment_profile.by_* methods.
 
-    TODO: I feel like this should be able to take in data directly as vectors/other datatypes, not just read from files.
-    TODO: Style-wise, is it cleaner to have it be a match statement or calling a method from a global dict? Cleaner here with a dict, cleaner overall with the match statements?
     TODO: I think it's reasonable for smoothing min_periods to be always set to 1 for this method, as it's a visualization tool, not quantitative. Is this unreasonable?
     TODO: Should the more restrictive meta versions allow *args, or only **kwargs?
     No, we want to be able to pass kwargs down to the line plotter, I think. Especially if we swap it out for one that takes more different standard args.
@@ -165,6 +163,10 @@ def get_enrichment_profiles(
 
     This helper function can be useful during plot prototyping, when repeatedly building plots from the same data.
     Its outputs can be passed as the first argument to make_enrichment_profile_plot().
+
+    TODO: I feel like this should be able to take in data directly as vectors/other datatypes, not just read from files.
+    TODO: Style-wise, is it cleaner to have it be a match statement or calling a method from a global dict? Cleaner here with a dict, cleaner overall with the match statements?
+    TODO: I think it's reasonable for smoothing min_periods to be always set to 1 for this method, as it's a visualization tool, not quantitative. Is this unreasonable?
 
     Args:
         mod_file_names: list of paths to modified base data files
