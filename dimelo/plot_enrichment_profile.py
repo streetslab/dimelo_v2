@@ -50,57 +50,19 @@ def plot_enrichment_profile(
     """
     if not utils.check_len_equal(mod_file_names, regions_list, motifs, sample_names):
         raise ValueError("Unequal number of inputs")
-    # TODO: redefinition error; still need to figure out how to do this elegantly in a way mypy likes
-    # dimelo/plot_enrichment_profile.py:53: error: Item "str" of "str | Path" has no attribute "suffix"  [union-attr]
-    mod_file_names = [Path(fn) for fn in mod_file_names]
 
-    trace_vectors = []
-    for mod_file, regions, motif in zip(mod_file_names, regions_list, motifs):
-        match mod_file.suffix:
-            case ".gz":
-                modified_base_counts, valid_base_counts = (
-                    load_processed.pileup_vectors_from_bedmethyl(
-                        bedmethyl_file=mod_file,
-                        regions=regions,
-                        motif=motif,
-                        window_size=window_size,
-                        single_strand=single_strand,
-                        regions_5to3prime=regions_5to3prime,
-                    )
-                )
-                # Default to nan so we can skip over unfilled values when plotting or doing a rolling average
-                nans_everywhere = np.full_like(
-                    modified_base_counts, np.nan, dtype=float
-                )
-                trace = np.divide(
-                    modified_base_counts,
-                    valid_base_counts,
-                    out=nans_everywhere,
-                    where=valid_base_counts != 0,
-                )
-            case ".fake":
-                trace = load_processed.vector_from_fake(
-                    mod_file=mod_file,
-                    bed_file=regions,
-                    motif=motif,
-                    window_size=window_size,
-                )
-            case _:
-                raise ValueError(f"Unsupported file type for {mod_file}")
-        if smooth_window is not None:
-            trace = utils.smooth_rolling_mean(trace, window=smooth_window)
-        trace_vectors.append(trace)
+    trace_vectors = get_enrichment_profiles(
+        mod_file_names=mod_file_names,
+        regions_list=regions_list,
+        motifs=motifs,
+        window_size=window_size,
+        single_strand=single_strand,
+        regions_5to3prime=regions_5to3prime,
+        smooth_window=smooth_window,
+    )
 
-    axes = utils.line_plot(
-        indep_vector=np.arange(
-            -len(trace_vectors[0]) // 2,
-            len(trace_vectors[0]) // 2 + len(trace_vectors[0]) % 2,
-        ),
-        indep_name="pos",
-        dep_vectors=trace_vectors,
-        dep_names=sample_names,
-        y_label="fraction modified bases",
-        **kwargs,
+    axes = make_enrichment_profile_plot(
+        trace_vectors=trace_vectors, sample_names=sample_names, **kwargs
     )
     return axes
 
@@ -187,3 +149,111 @@ def by_dataset(
         sample_names=sample_names,
         **kwargs,
     )
+
+
+def get_enrichment_profiles(
+    mod_file_names: list[str | Path],
+    regions_list: list[str | Path | list[str | Path]],
+    motifs: list[str],
+    window_size: int,
+    single_strand: bool = False,
+    regions_5to3prime: bool = False,
+    smooth_window: int | None = None,
+) -> list[np.ndarray]:
+    """
+    Get the enrichment profile traces, ready for plotting.
+
+    This helper function can be useful during plot prototyping, when repeatedly building plots from the same data.
+    Its outputs can be passed as the first argument to make_enrichment_profile_plot().
+
+    Args:
+        mod_file_names: list of paths to modified base data files
+        bed_file_names: list of paths to bed files specifying centered equal-length regions
+        mod_names: list of modifications to extract; expected to match mods available in the relevant mod_files
+        window_size: half-size of the desired window to plot; how far the window stretches on either side of the center point
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        regions_5to3prime: True means negative strand regions get flipped, False means no flipping
+        smooth_window: size of the moving window to use for smoothing. If set to None, no smoothing is performed
+
+    Returns:
+        List of enrichment profile traces
+    """
+    if not utils.check_len_equal(mod_file_names, regions_list, motifs):
+        raise ValueError("Unequal number of inputs")
+    # TODO: redefinition error; still need to figure out how to do this elegantly in a way mypy likes
+    # dimelo/plot_enrichment_profile.py:53: error: Item "str" of "str | Path" has no attribute "suffix"  [union-attr]
+    mod_file_names = [Path(fn) for fn in mod_file_names]
+
+    trace_vectors = []
+    for mod_file, regions, motif in zip(mod_file_names, regions_list, motifs):
+        match mod_file.suffix:
+            case ".gz":
+                modified_base_counts, valid_base_counts = (
+                    load_processed.pileup_vectors_from_bedmethyl(
+                        bedmethyl_file=mod_file,
+                        regions=regions,
+                        motif=motif,
+                        window_size=window_size,
+                        single_strand=single_strand,
+                        regions_5to3prime=regions_5to3prime,
+                    )
+                )
+                # Default to nan so we can skip over unfilled values when plotting or doing a rolling average
+                nans_everywhere = np.full_like(
+                    modified_base_counts, np.nan, dtype=float
+                )
+                trace = np.divide(
+                    modified_base_counts,
+                    valid_base_counts,
+                    out=nans_everywhere,
+                    where=valid_base_counts != 0,
+                )
+            case ".fake":
+                trace = load_processed.vector_from_fake(
+                    mod_file=mod_file,
+                    bed_file=regions,
+                    motif=motif,
+                    window_size=window_size,
+                )
+            case _:
+                raise ValueError(f"Unsupported file type for {mod_file}")
+        if smooth_window is not None:
+            trace = utils.smooth_rolling_mean(trace, window=smooth_window)
+        trace_vectors.append(trace)
+    return trace_vectors
+
+
+def make_enrichment_profile_plot(
+    trace_vectors: list[np.ndarray],
+    sample_names: list[str],
+    **kwargs,
+) -> Axes:
+    """
+    Plot the given enrichment profile traces.
+
+    This helper function can be useful during plot prototyping, when repeatedly building plots from the same data.
+    The first argument should be the output of get_enrichment_profiles().
+
+    Args:
+        trace_vectors: list of enrichment profile traces
+        sample_names: list of names to use for labeling traces in the output; legend entries
+        kwargs: other keyword parameters passed through to utils.line_plot
+
+    Returns:
+        Axes object containing the plot
+    """
+    if not utils.check_len_equal(trace_vectors, sample_names):
+        raise ValueError("Unequal number of inputs")
+    axes = utils.line_plot(
+        indep_vector=np.arange(
+            -len(trace_vectors[0]) // 2,
+            len(trace_vectors[0]) // 2 + len(trace_vectors[0]) % 2,
+        ),
+        indep_name="pos",
+        dep_vectors=trace_vectors,
+        dep_names=sample_names,
+        y_label="fraction modified bases",
+        **kwargs,
+    )
+    return axes
