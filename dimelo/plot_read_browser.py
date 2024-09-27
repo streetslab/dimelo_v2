@@ -284,6 +284,7 @@ def make_browser_figure(
     region_end: int,
     hover: bool = True,
     marker_size: int = 4,
+    colorscales: dict = utils.DEFAULT_COLORSCALES,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
@@ -357,8 +358,11 @@ def make_browser_figure(
                 ),
                 marker=dict(
                     size=marker_size,
+                    # line=dict(
+                    #     width=marker_size/8,
+                    #     color=utils.DEFAULT_COLORS[motif]),
                     color=motif_df["prob"],
-                    colorscale=utils.DEFAULT_COLORSCALES[motif],
+                    colorscale=colorscales[motif],
                     colorbar=dict(
                         title=f"{motif} probability",
                         titleside="right",
