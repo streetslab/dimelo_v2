@@ -1,5 +1,5 @@
 # Ruff changed to lint ipython notebooks by default; for now, revert to excluding them
-extend-exclude = [".ipynb"]
+extend-exclude = ["*.ipynb"]
 
 [lint]
 select = [
