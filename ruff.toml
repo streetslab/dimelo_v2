@@ -1,3 +1,6 @@
+# Ruff changed to lint ipython notebooks by default; for now, revert to excluding them
+extend-exclude = ["*.ipynb"]
+
 [lint]
 select = [
     # pycodestyle
