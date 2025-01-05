@@ -1,4 +1,5 @@
 from . import (
+    export,
     load_processed,
     parse_bam,
     plot_enrichment,
@@ -7,6 +8,7 @@ from . import (
 )
 
 __all__ = [
+    "export",
     "load_processed",
     "parse_bam",
     "plot_enrichment",

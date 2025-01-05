@@ -62,6 +62,7 @@ def pileup_counts_from_bedmethyl(
                 if chromosome in source_tabix.contigs:
                     for row in source_tabix.fetch(chromosome, start_coord, end_coord):
                         # TODO Consider using csv module
+                        # TODO: probably this whole block should share logic with vectors_from_bedmethyl AND from export module functions
                         tabix_fields = row.split("\t")
                         pileup_basemod = tabix_fields[3]
                         pileup_strand = tabix_fields[5]
@@ -198,6 +199,7 @@ def pileup_vectors_from_bedmethyl(
                 for row in source_tabix.fetch(chromosome, start_coord, end_coord):
                     # TODO: can we consolidate this with pileup_counts_from_bedmethyl?
                     # Just the checks?
+                    # TODO: probably this whole block should share logic with counts_from_bedmethyl AND from export functions
                     tabix_fields = row.split("\t")
                     pileup_basemod = tabix_fields[3]
                     pileup_strand = tabix_fields[5]
