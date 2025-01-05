@@ -1,3 +1,4 @@
+import os
 from collections import deque
 from pathlib import Path
 
@@ -50,8 +51,10 @@ def pileup_to_bigwig(
     output_file_path = (
         bigwig_file
         if bigwig_file is not None
-        else bedmethyl_file.stem / "pileup.bigwig"
+        else Path(bedmethyl_file).parent / "pileup.fractions.bigwig"
     )
+    os.makedirs(output_file_path.parent, exist_ok=True)
+
     # Because we need to set up the bigwig header for we start writing data to it, we need to pre-index the length of each contig
     tabix = pysam.TabixFile(str(bedmethyl_file))
     contig_lengths_tuples = []

@@ -409,6 +409,36 @@ mismatch values expected {value[np.where(value!=actual[key])]} vs actual {actual
             print("{test_case} skipped for read_vectors_from_hdf5.")
 
 
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestExport(DiMeLoParsingTestCase):
+    """
+    Tests file export functionality in export module.
+
+    This test currently simply checks that we can make the appropriate output files without raising errors.
+    The values stored in the files are not verified.
+    """
+
+    def test_unit__pileup_to_bigwig(
+        cls,
+        test_case,
+        kwargs,
+        results,
+    ):
+        kwargs_bigwig = filter_kwargs_for_func(dm.export.pileup_to_bigwig, kwargs)
+        kwargs_bigwig["bedmethyl_file"] = results["pileup"][0]
+        kwargs_bigwig["bigwig_file"] = (
+            cls.outDir / kwargs["output_name"] / "pileup.fractions.bigwig"
+        )
+        for motif in kwargs["motifs"]:
+            dm.export.pileup_to_bigwig(
+                **kwargs_bigwig,
+                motif=motif,
+            )
+
+
 class TestPlotEnrichmentSynthetic:
     """
     Tests plotting functionality in plot_enrichment.
