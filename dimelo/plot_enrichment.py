@@ -10,7 +10,7 @@ def plot_enrichment(
     regions_list: list[str | Path | list[str | Path]],
     motifs: list[str],
     sample_names: list[str],
-    # window_size: int | None = None,
+    window_size: int | None = None,
     single_strand: bool = False,
     **kwargs,
 ) -> Axes:
@@ -43,6 +43,7 @@ def plot_enrichment(
         mod_file_names=mod_file_names,
         regions_list=regions_list,
         motifs=motifs,
+        window_size=window_size,
         single_strand=single_strand,
     )
 
@@ -140,7 +141,7 @@ def get_enrichments(
     mod_file_names: list[str | Path],
     regions_list: list[str | Path | list[str | Path]],
     motifs: list[str],
-    # window_size: int | None = None,
+    window_size: int | None = None,
     single_strand: bool = False,
 ) -> list[float]:
     """
@@ -177,7 +178,7 @@ def get_enrichments(
                     bedmethyl_file=mod_file,
                     regions=regions,
                     motif=motif,
-                    # window_size=window_size,
+                    window_size=window_size,
                     single_strand=single_strand,
                 )
             case ".fake":

@@ -14,7 +14,7 @@ def pileup_counts_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
     regions: str | Path | list[str | Path] | None = None,
-    # window_size: int | None = None,
+    window_size: int | None = None,
     single_strand: bool = False,
 ) -> tuple[int, int]:
     """
@@ -54,7 +54,7 @@ def pileup_counts_from_bedmethyl(
         # Get counts from the specified regions
         regions_dict = utils.regions_dict_from_input(
             regions,
-            # window_size
+            window_size,
         )
         for chromosome, region_list in regions_dict.items():
             for start_coord, end_coord, strand in region_list:
