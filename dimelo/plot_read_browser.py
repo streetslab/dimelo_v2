@@ -86,9 +86,14 @@ def plot_read_browser(
         # TODO: This seems like the wrong place to be handling this.
         mod_event_df = mod_event_df[mod_event_df.prob > utils.adjust_threshold(2)]
 
-    chrom, (region_start, region_end, _) = utils.parse_region_string(
-        region=region, window_size=None
-    )
+    try:
+        chrom, (region_start, region_end, _) = utils.parse_region_string(
+            region=region, window_size=None
+        )
+    except ValueError as err:
+        raise ValueError(
+            "Invalid region specification: plot_read_browser requires a single genomic locus."
+        ) from err
 
     fig = make_browser_figure(
         read_extent_df=read_extent_df,

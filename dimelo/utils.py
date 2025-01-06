@@ -205,17 +205,26 @@ def parse_region_string(
     Returns:
         chromosome, (start_pos, end_pos, strand)
     """
-    # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
-    region_coords = region.split(",")
-    # The default strand is ., which is neither strand
-    strand = region_coords[1] if len(region_coords) > 1 else "."
-    chrom, coords = region_coords[0].split(":")
-    start, end = map(int, coords.split("-"))
-    if window_size is None:
-        return chrom, (start, end, strand)
-    else:
-        center_coord = (start + end) // 2
-        return chrom, (center_coord - window_size, center_coord + window_size, strand)
+    try:
+        # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
+        region_coords = region.split(",")
+        # The default strand is ., which is neither strand
+        strand = region_coords[1] if len(region_coords) > 1 else "."
+        chrom, coords = region_coords[0].split(":")
+        start, end = map(int, coords.split("-"))
+        if window_size is None:
+            return chrom, (start, end, strand)
+        else:
+            center_coord = (start + end) // 2
+            return chrom, (
+                center_coord - window_size,
+                center_coord + window_size,
+                strand,
+            )
+    except ValueError as err:
+        raise ValueError(
+            f"Invalid region string {region}. Region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)."
+        ) from err
 
 
 def bed_from_regions_dict(

@@ -4,6 +4,7 @@ from . import (
     parse_bam,
     plot_enrichment,
     plot_enrichment_profile,
+    plot_read_browser,
     plot_reads,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "parse_bam",
     "plot_enrichment",
     "plot_enrichment_profile",
+    "plot_read_browser",
     "plot_reads",
 ]

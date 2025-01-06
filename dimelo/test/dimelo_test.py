@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import plotly
 import pytest
 from matplotlib.axes import Axes
 
@@ -802,4 +803,56 @@ class TestPlotReads:
                 )
                 assert isinstance(ax, Axes), f"{test_case}: plotting failed."
         else:
-            print(f"{test_case} skipped for test_plot_reads_plot_reads.")
+            print(f"{test_case} skipped for test_unit__plot_reads_plot_reads.")
+
+
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestPlotReadBrowser:
+    def test_unit__plot_read_browser(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["extract"][0] is not None:
+            kwargs_plot_read_browser = filter_kwargs_for_func(
+                dm.plot_read_browser.plot_read_browser, kwargs
+            )
+            if (
+                kwargs["thresh"] is None
+                and kwargs["thresh"] is None
+                and not isinstance(kwargs["regions"], list)
+                and Path(kwargs["regions"]).suffix != ".bed"
+            ):
+                fig = dm.plot_read_browser.plot_read_browser(
+                    mod_file_name=results["extract"][0],
+                    region=kwargs["regions"],
+                    **kwargs_plot_read_browser,
+                )
+                assert isinstance(
+                    fig, plotly.graph_objs.Figure
+                ), f"{test_case}: plotting failed."
+            else:
+                with pytest.raises(ValueError) as excinfo:
+                    fig = dm.plot_read_browser.plot_read_browser(
+                        mod_file_name=results["extract"][0],
+                        region=kwargs["regions"],
+                        **kwargs_plot_read_browser,
+                    )
+                if kwargs["thresh"] is not None:
+                    assert "A threshold has been applied" in str(
+                        excinfo.value
+                    ), f"{test_case}: unexpected exception {excinfo.value}"
+                elif (
+                    isinstance(kwargs["regions"], list)
+                    or Path(kwargs["regions"]).suffix == ".bed"
+                ):
+                    assert "Invalid region string" in str(
+                        excinfo.value
+                    ), f"{test_case}: unexpected exception {excinfo.value}"
+
+        else:
+            print(f"{test_case} skipped for test_unit__plot_read_browser")
