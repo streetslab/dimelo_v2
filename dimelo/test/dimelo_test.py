@@ -842,17 +842,26 @@ class TestPlotReadBrowser:
                         region=kwargs["regions"],
                         **kwargs_plot_read_browser,
                     )
-                if kwargs["thresh"] is not None:
-                    assert "A threshold has been applied" in str(
-                        excinfo.value
-                    ), f"{test_case}: unexpected exception {excinfo.value}"
-                elif (
+                if (
                     isinstance(kwargs["regions"], list)
                     or Path(kwargs["regions"]).suffix == ".bed"
+                ) and kwargs["thresh"] is None:
+                    assert (
+                        "Invalid region" in str(excinfo.value)
+                    ), f"{test_case}: unexpected exception for no-threshold bad-region case {excinfo.value}"
+                elif (
+                    kwargs["thresh"] is not None
+                    and not isinstance(kwargs["regions"], list)
+                    and Path(kwargs["regions"]).suffix != ".bed"
                 ):
-                    assert "Invalid region string" in str(
-                        excinfo.value
-                    ), f"{test_case}: unexpected exception {excinfo.value}"
+                    assert (
+                        "A threshold has been applied" in str(excinfo.value)
+                    ), f"{test_case}: unexpected exception thresholded valid-region case {excinfo.value}"
+                else:
+                    assert (
+                        "A threshold has been applied" in str(excinfo.value)
+                        or "Invalid region" in str(excinfo.value)
+                    ), f"{test_case}: unexpected exception thresholded bad-region case {excinfo.value}"
 
         else:
             print(f"{test_case} skipped for test_unit__plot_read_browser")

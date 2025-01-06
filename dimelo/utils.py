@@ -221,7 +221,7 @@ def parse_region_string(
                 center_coord + window_size,
                 strand,
             )
-    except ValueError as err:
+    except (ValueError, AttributeError) as err:
         raise ValueError(
             f"Invalid region string {region}. Region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)."
         ) from err
