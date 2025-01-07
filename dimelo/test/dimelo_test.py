@@ -317,6 +317,43 @@ class TestLoadProcessed:
     outputs section of dimelo/test/generate_test_targets.ipynb.
     """
 
+    def test_unit__regions_list_list(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            # test pileup loading
+            kwargs_counts_from_bedmethyl = filter_kwargs_for_func(
+                dm.load_processed.pileup_counts_from_bedmethyl, kwargs
+            )
+            kwargs_vectors_from_bedmethyl = filter_kwargs_for_func(
+                dm.load_processed.pileup_vectors_from_bedmethyl, kwargs
+            )
+            for motif in kwargs["motifs"]:
+                dm.load_processed.regions_to_list(
+                    function_handle=dm.load_processed.pileup_counts_from_bedmethyl,
+                    bedmethyl_file=results["pileup"][0],
+                    motif=motif,
+                    **kwargs_counts_from_bedmethyl,
+                )
+                dm.load_processed.regions_to_list(
+                    function_handle=dm.load_processed.pileup_vectors_from_bedmethyl,
+                    bedmethyl_file=results["pileup"][0],
+                    motif=motif,
+                    **kwargs_vectors_from_bedmethyl,
+                )
+        if results["extract"][0] is not None:
+            kwargs_read_vectors_from_hdf5 = filter_kwargs_for_func(
+                dm.load_processed.read_vectors_from_hdf5, kwargs
+            )
+            dm.load_processed.regions_to_list(
+                function_handle=dm.load_processed.read_vectors_from_hdf5,
+                file=results["extract"][0],
+                **kwargs_read_vectors_from_hdf5,
+            )
+
     def test_unit__pileup_counts_from_bedmethyl(
         self,
         test_case,
@@ -913,6 +950,166 @@ class TestPlotDepthProfile:
                 assert isinstance(ax, Axes), f"{test_case}: plotting failed."
         else:
             print(f"{test_case} skipped for plot_depth_profile.by_dataset.")
+
+
+class TestPlotDepthHistogramSynthetic:
+    """
+    Tests plotting functionality in plot_depth_histogram.
+
+    This test simply checks that we can make plots from synthetic data without raising errors.
+    Appearance of plots is not verified.
+    """
+
+    def test_unit__plot_depth_histogram_plot_depth_histogram_synthetic(self):
+        ax = dm.plot_depth_histogram.plot_depth_histogram(
+            mod_file_names=["test1.fake", "test2.fake"],
+            regions_list=["test1.bed", "test2.bed"],
+            motifs=["A", "C"],
+            window_size=500,
+            sample_names=["sample1", "sample2"],
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_histogram_by_modification_synthetic(self):
+        ax = dm.plot_depth_histogram.by_modification(
+            mod_file_name="test.fake",
+            regions="test.bed",
+            window_size=500,
+            motifs=["A", "C"],
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_histogram_by_region_synthetic(self):
+        ax = dm.plot_depth_histogram.by_regions(
+            mod_file_name="test.fake",
+            regions_list=["test1.bed", "test2.bed"],
+            motif="A",
+            window_size=500,
+            sample_names=["on target", "off target"],
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_histogram_by_dataset_synthetic(self):
+        ax = dm.plot_depth_histogram.by_dataset(
+            mod_file_names=["test1.fake", "test2.fake"],
+            regions="test.bed",
+            motif="A",
+            window_size=500,
+            sample_names=["experiment 1", "experiment 2"],
+        )
+        assert isinstance(ax, Axes)
+
+
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestPlotDepthHistogram:
+    def test_unit__plot_depth_histogram_plot_depth_histogram(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_plot_depth_histogram = filter_kwargs_for_func(
+                dm.plot_depth_histogram.plot_depth_histogram,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            for motif in kwargs["motifs"]:
+                regions_list = (
+                    kwargs["regions"]
+                    if isinstance(kwargs["regions"], list)
+                    else [kwargs["regions"]]
+                )
+                kwargs_plot_depth_histogram_plot_depth_histogram["motifs"] = [
+                    motif for _ in regions_list
+                ]
+                ax = dm.plot_depth_histogram.plot_depth_histogram(
+                    mod_file_names=[results["pileup"][0] for _ in regions_list],
+                    regions_list=regions_list,
+                    sample_names=["label" for _ in regions_list],
+                    **kwargs_plot_depth_histogram_plot_depth_histogram,
+                )
+                assert isinstance(
+                    ax, Axes
+                ), f"{test_case}: plotting failed for {motif}."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.plot_depth_histogram.")
+
+    def test_unit__plot_depth_histogram_by_regions(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_by_regions = filter_kwargs_for_func(
+                dm.plot_depth_histogram.by_regions,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            for motif in kwargs["motifs"]:
+                regions_list = (
+                    kwargs["regions"]
+                    if isinstance(kwargs["regions"], list)
+                    else [kwargs["regions"]]
+                )
+                ax = dm.plot_depth_histogram.by_regions(
+                    mod_file_name=results["pileup"][0],
+                    regions_list=regions_list,
+                    motif=motif,
+                    sample_names=["label" for _ in regions_list],
+                    **kwargs_plot_depth_histogram_by_regions,
+                )
+                assert isinstance(
+                    ax, Axes
+                ), f"{test_case}: plotting failed for {motif}."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.by_regions.")
+
+    def test_unit__plot_depth_histogram_by_modification(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_by_modification = filter_kwargs_for_func(
+                dm.plot_depth_histogram.by_modification,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            ax = dm.plot_depth_histogram.by_modification(
+                mod_file_name=results["pileup"][0],
+                **kwargs_plot_depth_histogram_by_modification,
+            )
+            assert isinstance(ax, Axes), f"{test_case}: plotting failed."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.by_modification.")
+
+    def test_unit__plot_depth_by_dataset(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_by_dataset = filter_kwargs_for_func(
+                dm.plot_depth_histogram.by_dataset,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            for motif in kwargs["motifs"]:
+                ax = dm.plot_depth_histogram.by_dataset(
+                    mod_file_names=[results["pileup"][0]],
+                    motif=motif,
+                    **kwargs_plot_depth_histogram_by_dataset,
+                )
+                assert isinstance(ax, Axes), f"{test_case}: plotting failed."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.by_dataset.")
 
 
 class TestPlotReadsSynthetic:
