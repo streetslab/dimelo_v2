@@ -14,6 +14,7 @@ def plot_depth_histogram(
     window_size: int,
     single_strand: bool = False,
     average_within_region: bool = False,
+    cores=None,
     **kwargs,
 ) -> Axes:
     """
@@ -54,6 +55,7 @@ def plot_depth_histogram(
         window_size=window_size,
         single_strand=single_strand,
         average_within_region=average_within_region,
+        cores=cores,
     )
 
     axes = make_depth_histogram_plot(
@@ -157,6 +159,7 @@ def get_depth_counts(
     window_size: int,
     single_strand: bool = False,
     average_within_region: bool = False,
+    cores=1,
 ) -> list[np.ndarray]:
     """
     Get the depth counts, ready for plotting.
@@ -198,6 +201,7 @@ def get_depth_counts(
                     motif=motif,
                     window_size=window_size,
                     single_strand=single_strand,
+                    cores=cores,
                 )
                 # places where read depth is zero are assumed to not have the motif present - this may not always be true,
                 # but with the available information in a pileup file it's the best we can do

@@ -1,3 +1,4 @@
+import multiprocessing
 from collections import defaultdict
 from pathlib import Path
 
@@ -32,6 +33,14 @@ DEFAULT_COLORS.update(
 # Default colorscales for plotly; based off of DEFAULT_COLORS
 DEFAULT_COLORSCALES = defaultdict(lambda: ["white", "grey"])
 DEFAULT_COLORSCALES.update([(k, ["white", v]) for k, v in DEFAULT_COLORS.items()])
+
+
+def cores_to_run(cores):
+    cores_avail = multiprocessing.cpu_count()
+    if cores is None or cores > cores_avail:
+        return cores_avail
+    else:
+        return cores
 
 
 class ParsedMotif:

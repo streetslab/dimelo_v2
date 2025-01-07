@@ -1,6 +1,8 @@
 import gzip
 import random
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import h5py
@@ -11,11 +13,17 @@ from tqdm.auto import tqdm
 from . import test_data, utils
 
 
+def process_region(region_tuple, function_handle, **kwargs):
+    chromosome, start_coord, end_coord, strand = region_tuple
+    single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
+    return function_handle(regions=single_region_str, **kwargs)
+
+
 def regions_to_list(
     function_handle,
     regions,
     window_size=None,
-    cores=1,
+    cores=None,
     **kwargs,
 ):
     """
@@ -34,19 +42,39 @@ def regions_to_list(
         regions,
         window_size,
     )
-    loaded_data_list = []
-    for chromosome, region_list in tqdm(
-        regions_dict.items(), desc="loading from contigs"
-    ):
-        for start_coord, end_coord, strand in tqdm(
-            region_list, desc=f"loading regions from {chromosome}", leave=False
-        ):
-            single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
-            loaded_data_list.append(
-                function_handle(regions=single_region_str, **kwargs)
+
+    # Flatten regions into a list of (chromosome, start, end, strand)
+    region_tuples = [
+        (chromosome, start, end, strand)
+        for chromosome, region_list in regions_dict.items()
+        for start, end, strand in region_list
+    ]
+
+    cores_to_run = utils.cores_to_run(cores)
+
+    if cores_to_run > 1:
+        with ProcessPoolExecutor(max_workers=cores_to_run) as executor:
+            # Use functools.partial to pre-fill arguments
+            process_partial = partial(
+                process_region, function_handle=function_handle, **kwargs
             )
 
-    return loaded_data_list
+            # Use executor.map without lambda
+            results = list(
+                tqdm(
+                    executor.map(process_partial, region_tuples),
+                    total=len(region_tuples),
+                    desc=f"Processing regions in parallel across {cores_to_run}",
+                )
+            )
+    else:
+        # Single-threaded fallback
+        results = [
+            process_region(region, function_handle, **kwargs)
+            for region in tqdm(region_tuples, desc="Processing regions")
+        ]
+
+    return results
 
 
 def pileup_counts_from_bedmethyl(
