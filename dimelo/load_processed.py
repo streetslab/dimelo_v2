@@ -22,8 +22,8 @@ def process_region(region_tuple, function_handle, **kwargs):
 def regions_to_list(
     function_handle,
     regions,
-    window_size=None,
-    cores=None,
+    window_size: int | None = None,
+    cores: int | None = None,
     **kwargs,
 ):
     """
@@ -35,7 +35,6 @@ def regions_to_list(
         regions: the region specifier
         window_size: window around centers of regions, defaults to None
         cores: process count across which to parallelize. Each individual region will only ever get one core.
-            (this is not currently implemented, so values not equal to 1 will do nothing different).
         **kwargs: all necessary keyword arguments to pass down to the loader
     """
     regions_dict = utils.regions_dict_from_input(
@@ -56,7 +55,7 @@ def regions_to_list(
         with ProcessPoolExecutor(max_workers=cores_to_run) as executor:
             # Use functools.partial to pre-fill arguments
             process_partial = partial(
-                process_region, function_handle=function_handle, **kwargs
+                process_region, function_handle=function_handle, cores=1, **kwargs
             )
 
             # Use executor.map without lambda
@@ -70,7 +69,7 @@ def regions_to_list(
     else:
         # Single-threaded fallback
         results = [
-            process_region(region, function_handle, **kwargs)
+            process_region(region, function_handle, cores=1, **kwargs)
             for region in tqdm(region_tuples, desc="Processing regions")
         ]
 
@@ -83,6 +82,7 @@ def pileup_counts_from_bedmethyl(
     regions: str | Path | list[str | Path] | None = None,
     window_size: int | None = None,
     single_strand: bool = False,
+    cores: int | None = None,  # currently unused
 ) -> tuple[int, int]:
     """
     Extract number of modified bases and total number of bases from the given bedmethyl file.
@@ -105,6 +105,7 @@ def pileup_counts_from_bedmethyl(
         window_size: (currently disabled) window around center of region, +-window_size
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         tuple containing counts of (modified_bases, total_bases)
@@ -208,6 +209,7 @@ def pileup_vectors_from_bedmethyl(
     window_size: int | None = None,
     single_strand: bool = False,
     regions_5to3prime: bool = False,
+    cores: int | None = None,  # currently unused
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Extract per-position pileup counts at valid motifs across one or more superimposed regions.
@@ -239,6 +241,7 @@ def pileup_vectors_from_bedmethyl(
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
         regions_5to3prime: True means negative strand regions get flipped, False means no flipping
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         tuple containing (modified_base_counts, valid_base_counts)
@@ -339,6 +342,7 @@ def read_vectors_from_hdf5(
     single_strand: bool = False,
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     calculate_mod_fractions: bool = True,
+    cores: int | None = None,  # currently unused
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
     Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
@@ -380,6 +384,7 @@ def read_vectors_from_hdf5(
         sort_by: Read properties by which to sort, either one string or a list of strings. Options
             include chromosome, region_start, region_end, read_start, read_end, and motif. More to
             be added in future.
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         a list of tuples, each tuple containing all datasets corresponding to an individual read that
@@ -569,6 +574,7 @@ def readwise_binary_modification_arrays(
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     thresh: float | None = None,
     relative: bool = True,
+    cores: int | None = None,  # currently unused
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
     Pulls a list of read data out of a file containing processed read vectors, formatted with
@@ -610,6 +616,7 @@ def readwise_binary_modification_arrays(
             in the genomes, centered at the center of the region. If False, absolute coordinates are provided.
             There is not currently a check for all reads being on the same chromosome if relative=False, but
             this could create unexpected behaviour for a the standard visualizations.
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         Returns a tuple of three arrays, of length (N_READS * len(mod_names)), and a dict of regions.
