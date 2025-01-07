@@ -4,9 +4,11 @@ This folder contains data and code to run basic tests on the `dimelo` package.
 
 `__init__.py` sets up a framework for running parsing, including downloading a reference genome and processing input files appropriately.
 
-`dimelo_test.py` implements unit tests and integration tests using `pytest`
+`dimelo_test.py` implements unit tests and integration tests using `pytest`. Tests are split into classes to handle temporary directories cleanly and separate different types of tests. 
 
-`generate_test_targets.ipynb` contains code to create the target outputs for the unit tests. These should not be updated unless you confirm that any change in behavior is actually correct. *Special care should be taken for the `load_processed` outputs, which should not change with interface changes. If those outputs don't match and need to be regenerated, that is* ***reason for concern.*** However, updates to e.g. the .h5 single read format and corresponding changes to the `load_processed` methods may require making a new target .h5 file while `load_processed.binarized_read_from_hdf5` still returns the right array values and so on.
+`generate_targets.py` contains code to create the target outputs for the unit tests, ultimately creating a test_matrix.pkl file containing a pickled directionary of test kwargs and results. These should not be updated unless you confirm that any change in behavior is actually correct, i.e. if any test is failing make sure you know why before considering replacing the target values. *Special care should be taken for the `load_processed` outputs, which should not change with interface changes. If those outputs don't match and need to be regenerated, that is* ***reason for concern.*** However, updates to e.g. the .h5 single read format and corresponding changes to the `load_processed` methods may require making a new target .h5 file while `load_processed.binarized_read_from_hdf5` still returns the right array values and so on. Run `python generate_targets.py --help` for assistance with arguments to update only a subset of target value or test cases.
+
+`cases.py` contains a set of test cases which will be run through all tests in `dimelo_test.py`, and used to generate corresponding targets in `generate_targets.py`. The format schema contains kwargs by name in a dictionary for each test case: these are passed *directly* to the parse, load, plot, and export functions, simply filtering out un-needed ones. Formats must match the requirements of the functions that take these arguments.
 
 The `data` folder contains .bam files and .bed files to use for testing. These files are also used by the tutorial.
 

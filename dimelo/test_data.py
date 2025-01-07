@@ -119,5 +119,5 @@ def fake_peak_enrichment(
     """
     reads = [fake_read_mod_calls(halfsize, "peak", peak_height) for _ in range(n_reads)]
     modified_bases = np.sum(reads)
-    total_bases = np.sum(len(read) for read in reads)
+    total_bases = np.sum(np.fromiter((len(read) for read in reads), dtype=int))
     return (modified_bases, total_bases)
