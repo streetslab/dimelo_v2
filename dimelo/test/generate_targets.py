@@ -8,9 +8,9 @@ from tqdm.auto import tqdm
 from dimelo import load_processed, parse_bam
 from dimelo.test import DiMeLoParsingTestCase, RelativePath, filter_kwargs_for_func
 
-ref_genome_file = Path("./output/chm13.draft_v1.0.fasta")
+ref_genome_file = Path(RelativePath("./output/chm13.draft_v1.0.fasta"))
 # Base input and output directories
-test_data_dir = Path("./data")
+test_data_dir = Path(RelativePath("./data"))
 output_dir = test_data_dir / "test_targets"
 
 output_dir.mkdir(exist_ok=True)
@@ -175,7 +175,7 @@ def main(test_matrix):
         function_name = f"generate_{subset}"
         globals()[function_name](test_matrix, args.case_subset)
 
-    with open("./data/test_targets/test_matrix.pickle", "wb") as file:
+    with open(RelativePath("./data/test_targets/test_matrix.pickle"), "wb") as file:
         pickle.dump(test_matrix, file)
 
 
