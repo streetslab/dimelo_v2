@@ -6,6 +6,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pysam
+from tqdm.auto import tqdm
 
 from . import test_data, utils
 
@@ -34,8 +35,12 @@ def regions_to_list(
         window_size,
     )
     loaded_data_list = []
-    for chromosome, region_list in regions_dict.items():
-        for start_coord, end_coord, strand in region_list:
+    for chromosome, region_list in tqdm(
+        regions_dict.items(), desc="loading from contigs"
+    ):
+        for start_coord, end_coord, strand in tqdm(
+            region_list, desc=f"loading regions from {chromosome}", leave=False
+        ):
             single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
             loaded_data_list.append(
                 function_handle(regions=single_region_str, **kwargs)
