@@ -6,25 +6,24 @@ from matplotlib.axes import Axes
 from . import load_processed, utils
 
 
-def plot_depth_profile(
+def plot_depth_histogram(
     mod_file_names: list[str | Path],
     regions_list: list[str | Path | list[str | Path]],
     motifs: list[str],
     sample_names: list[str],
     window_size: int,
     single_strand: bool = False,
-    regions_5to3prime: bool = False,
-    smooth_window: int | None = None,
+    average_within_region: bool = False,
     **kwargs,
 ) -> Axes:
     """
-    Plot depth profiles, overlaying the resulting traces on top of each other.
+    Plot depth histograms, overlaying the resulting traces on top of each other.
 
     Each input list is expected to be parallel and the same length. Each index represents one analysis condition across the lists.
     Using the same file for multiple conditions requires adding the same file multiple times, in the appropriate indices.
 
-    This is the most flexible method for depth profile plotting. For most use cases, consider
-    using one of the plot_depth_profile.by_* methods.
+    This is the most flexible method for depth histogram plotting. For most use cases, consider
+    using one of the plot_depth_histogram.by_* methods.
 
     TODO: I think it's reasonable for smoothing min_periods to be always set to 1 for this method, as it's a visualization tool, not quantitative. Is this unreasonable?
     TODO: Should the more restrictive meta versions allow *args, or only **kwargs?
@@ -39,8 +38,7 @@ def plot_depth_profile(
         window_size: half-size of the desired window to plot; how far the window stretches on either side of the center point
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
-        regions_5to3prime: True means negative strand regions get flipped, False means no flipping
-        smooth_window: size of the moving window to use for smoothing. If set to None, no smoothing is performed
+        average_within_region: if True, each region will only report a single depth value, averaging across all non-zero depths
         kwargs: other keyword parameters passed through to utils.line_plot
 
     Returns:
@@ -49,18 +47,21 @@ def plot_depth_profile(
     if not utils.check_len_equal(mod_file_names, regions_list, motifs, sample_names):
         raise ValueError("Unequal number of inputs")
 
-    trace_vectors = get_depth_profiles(
+    depth_vectors = get_depth_counts(
         mod_file_names=mod_file_names,
         regions_list=regions_list,
         motifs=motifs,
         window_size=window_size,
         single_strand=single_strand,
-        regions_5to3prime=regions_5to3prime,
-        smooth_window=smooth_window,
+        average_within_region=average_within_region,
     )
 
-    axes = make_depth_profile_plot(
-        trace_vectors=trace_vectors, sample_names=sample_names, **kwargs
+    axes = make_depth_histogram_plot(
+        depth_vectors=depth_vectors,
+        sample_names=sample_names,
+        average_within_region=average_within_region,
+        y_label="regions count" if average_within_region else "positions count",
+        **kwargs,
     )
     return axes
 
@@ -72,12 +73,12 @@ def by_modification(
     **kwargs,
 ) -> Axes:
     """
-    Plot depth profile, holding modification file and regions constant, varying modification types
+    Plot depth histogram, holding modification file and regions constant, varying modification types
 
-    See plot_depth_profile for details.
+    See plot_depth_histogram for details.
     """
     n_mods = len(motifs)
-    return plot_depth_profile(
+    return plot_depth_histogram(
         mod_file_names=[mod_file_name] * n_mods,
         regions_list=[regions] * n_mods,
         motifs=motifs,
@@ -88,10 +89,10 @@ def by_modification(
 
 """
 TODO: Re-assignment issue:
-dimelo/plot_enrichment_profile.py:142: error: Incompatible types in assignment (expression has type "list[str | Path | list[str | Path]]", variable has type "list[str] | None")  [assignment]
-dimelo/plot_enrichment_profile.py:148: error: Argument "sample_names" to "plot_enrichment_profile" has incompatible type "list[str] | None"; expected "list[str]"  [arg-type]
-dimelo/plot_enrichment_profile.py:168: error: Incompatible types in assignment (expression has type "list[str | Path]", variable has type "list[str] | None")  [assignment]
-dimelo/plot_enrichment_profile.py:174: error: Argument "sample_names" to "plot_enrichment_profile" has incompatible type "list[str] | None"; expected "list[str]"  [arg-type]
+dimelo/plot_enrichment_histogram.py:142: error: Incompatible types in assignment (expression has type "list[str | Path | list[str | Path]]", variable has type "list[str] | None")  [assignment]
+dimelo/plot_enrichment_histogram.py:148: error: Argument "sample_names" to "plot_enrichment_histogram" has incompatible type "list[str] | None"; expected "list[str]"  [arg-type]
+dimelo/plot_enrichment_histogram.py:168: error: Incompatible types in assignment (expression has type "list[str | Path]", variable has type "list[str] | None")  [assignment]
+dimelo/plot_enrichment_histogram.py:174: error: Argument "sample_names" to "plot_enrichment_histogram" has incompatible type "list[str] | None"; expected "list[str]"  [arg-type]
 
 If sample names is None we assign it non-None values, so it's not clear what the problem is to me. We could make an intermediate dummy variable I guess? If that is the complaint?
 """
@@ -105,16 +106,16 @@ def by_regions(
     **kwargs,
 ) -> Axes:
     """
-    Plot depth profile, holding modification file and modification types constant, varying regions
+    Plot depth histogram, holding modification file and modification types constant, varying regions
 
     Note: Sample names default to the names of the bed files.
 
-    See plot_depth_profile for details.
+    See plot_depth_histogram for details.
     """
     if sample_names is None:
         sample_names = regions_list
     n_beds = len(regions_list)
-    return plot_depth_profile(
+    return plot_depth_histogram(
         mod_file_names=[mod_file_name] * n_beds,
         regions_list=regions_list,
         motifs=[motif] * n_beds,
@@ -131,16 +132,16 @@ def by_dataset(
     **kwargs,
 ) -> Axes:
     """
-    Plot depth profile, holding modification types and regions constant, varying modification files
+    Plot depth histogram, holding modification types and regions constant, varying modification files
 
     Note: Sample names default to the names of the modification files.
 
-    See plot_depth_profile for details.
+    See plot_depth_histogram for details.
     """
     if sample_names is None:
         sample_names = mod_file_names
     n_mod_files = len(mod_file_names)
-    return plot_depth_profile(
+    return plot_depth_histogram(
         mod_file_names=mod_file_names,
         regions_list=[regions] * n_mod_files,
         motifs=[motif] * n_mod_files,
@@ -149,20 +150,19 @@ def by_dataset(
     )
 
 
-def get_depth_profiles(
+def get_depth_counts(
     mod_file_names: list[str | Path],
     regions_list: list[str | Path | list[str | Path]],
     motifs: list[str],
     window_size: int,
     single_strand: bool = False,
-    regions_5to3prime: bool = False,
-    smooth_window: int | None = None,
+    average_within_region: bool = False,
 ) -> list[np.ndarray]:
     """
-    Get the depth profile traces, ready for plotting.
+    Get the depth counts, ready for plotting.
 
     This helper function can be useful during plot prototyping, when repeatedly building plots from the same data.
-    Its outputs can be passed as the first argument to make_depth_profile_plot().
+    Its outputs can be passed as the first argument to make_depth_histogram_plot().
 
     TODO: I feel like this should be able to take in data directly as vectors/other datatypes, not just read from files.
     TODO: Style-wise, is it cleaner to have it be a match statement or calling a method from a global dict? Cleaner here with a dict, cleaner overall with the match statements?
@@ -179,30 +179,46 @@ def get_depth_profiles(
         smooth_window: size of the moving window to use for smoothing. If set to None, no smoothing is performed
 
     Returns:
-        List of depth profile traces
+        List of depth histogram traces
     """
     if not utils.check_len_equal(mod_file_names, regions_list, motifs):
         raise ValueError("Unequal number of inputs")
     # TODO: redefinition error; still need to figure out how to do this elegantly in a way mypy likes
-    # dimelo/plot_depth_profile.py:53: error: Item "str" of "str | Path" has no attribute "suffix"  [union-attr]
+    # dimelo/plot_depth_histogram.py:53: error: Item "str" of "str | Path" has no attribute "suffix"  [union-attr]
     mod_file_names = [Path(fn) for fn in mod_file_names]
 
-    trace_vectors = []
+    depth_vectors = []
     for mod_file, regions, motif in zip(mod_file_names, regions_list, motifs):
         match mod_file.suffix:
             case ".gz":
-                _, valid_base_counts = load_processed.pileup_vectors_from_bedmethyl(
+                pileup_vectors_list = load_processed.regions_to_list(
+                    function_handle=load_processed.pileup_vectors_from_bedmethyl,
                     bedmethyl_file=mod_file,
                     regions=regions,
                     motif=motif,
                     window_size=window_size,
                     single_strand=single_strand,
-                    regions_5to3prime=regions_5to3prime,
                 )
-                trace = valid_base_counts.astype(float)
-                trace[trace == 0] = np.nan
+                # places where read depth is zero are assumed to not have the motif present - this may not always be true,
+                # but with the available information in a pileup file it's the best we can do
+                read_depth_vectors_list = [
+                    valid_base_counts[valid_base_counts > 0]
+                    for _, valid_base_counts in pileup_vectors_list
+                ]
+                if average_within_region:
+                    # each region's read depth vector gets collapsed to a single mean value
+                    read_depths = np.array(
+                        [
+                            np.mean(read_depth_vector)
+                            for read_depth_vector in read_depth_vectors_list
+                        ]
+                    )
+                else:
+                    # each region's read depth vector gets added to one extending read depths list without aggregating
+                    read_depths = np.concatenate(read_depth_vectors_list)
+
             case ".fake":
-                trace = load_processed.vector_from_fake(
+                read_depths = load_processed.vector_from_fake(
                     mod_file=mod_file,
                     bed_file=regions,
                     motif=motif,
@@ -210,42 +226,41 @@ def get_depth_profiles(
                 )
             case _:
                 raise ValueError(f"Unsupported file type for {mod_file}")
-        if smooth_window is not None:
-            trace = utils.smooth_rolling_mean(trace, window=smooth_window)
-        trace_vectors.append(trace)
-    return trace_vectors
+        depth_vectors.append(read_depths)
+    return depth_vectors
 
 
-def make_depth_profile_plot(
-    trace_vectors: list[np.ndarray],
+def make_depth_histogram_plot(
+    depth_vectors: list[np.ndarray],
     sample_names: list[str],
+    y_label: str = "count",
+    average_within_region: bool = False,
     **kwargs,
 ) -> Axes:
     """
-    Plot the given depth profile traces.
+    Plot the given depth histogram traces.
 
     This helper function can be useful during plot prototyping, when repeatedly building plots from the same data.
-    The first argument should be the output of get_depth_profiles().
+    The first argument should be the output of get_depth_histograms().
 
     Args:
-        trace_vectors: list of depth profile traces
+        depth_vectors: list of depth histogram counts
         sample_names: list of names to use for labeling traces in the output; legend entries
         kwargs: other keyword parameters passed through to utils.line_plot
 
     Returns:
         Axes object containing the plot
     """
-    if not utils.check_len_equal(trace_vectors, sample_names):
+    if not utils.check_len_equal(depth_vectors, sample_names):
         raise ValueError("Unequal number of inputs")
-    axes = utils.line_plot(
-        indep_vector=np.arange(
-            -len(trace_vectors[0]) // 2,
-            len(trace_vectors[0]) // 2 + len(trace_vectors[0]) % 2,
-        ),
-        indep_name="pos",
-        dep_vectors=trace_vectors,
-        dep_names=sample_names,
-        y_label="per strand reads\nwith motif and mod info",
+    axes = utils.hist_plot(
+        value_vectors=depth_vectors,
+        value_names=sample_names,
+        x_label="per strand read\ndepth in region"
+        if average_within_region
+        else "per strand read\ndepth per position",
+        y_label=y_label,
+        integer_values=not average_within_region,
         **kwargs,
     )
     return axes

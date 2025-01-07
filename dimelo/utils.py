@@ -316,6 +316,60 @@ def line_plot(
     )
 
 
+def hist_plot(
+    value_vectors: list[np.ndarray],
+    value_names: list[str],
+    x_label: str,
+    y_label: str,
+    integer_values: bool = False,
+    **kwargs,
+) -> Axes:
+    """
+    Utility for producing overlayed histogram plots for data vectors containing values with some distribution.
+
+    Takes arbitrarily many counts vectors and plots on same histogram.
+
+    Args:
+        value_vectors: parallel with each entry in vectors
+        value_names: parallel with value_vectors; names of each overlayed line; set as legend entries
+        x_label: name of distributed values; set as x axis label
+        y_label: y-axis label
+        kwargs: other keyword parameters passed through to seaborn.histplot
+
+    Returns:
+        Axes object containing the plot
+
+    Raises:
+        ValueError: raised if any vectors are of unequal length
+    """
+    # Flatten the vectors and assign corresponding labels
+    data_dict = {
+        x_label: np.concatenate(value_vectors),
+        y_label: np.repeat(value_names, [len(vec) for vec in value_vectors]),
+    }
+
+    # Create DataFrame
+    data_table = pd.DataFrame(data_dict)
+    # Set integer bins if values will be only integers
+    bins = (
+        np.arange(data_table[x_label].min() - 0.5, data_table[x_label].max() + 1.5, 1)
+        if integer_values
+        else None
+    )
+    # plot histogram
+    ax = sns.histplot(
+        data=data_table,
+        x=x_label,
+        hue=y_label,
+        multiple="dodge",
+        **{**kwargs, **({"bins": bins} if bins is not None else {})},
+    )
+
+    ax.set_ylabel(y_label)
+
+    return ax
+
+
 def smooth_rolling_mean(
     vector: np.ndarray[float], window: int, min_periods: int = 1
 ) -> np.ndarray:

@@ -10,6 +10,40 @@ import pysam
 from . import test_data, utils
 
 
+def regions_to_list(
+    function_handle,
+    regions,
+    window_size=None,
+    cores=1,
+    **kwargs,
+):
+    """
+    Run any standard load_processed pileup or extract loader loading each region from the region
+    specifier into a new element of a list.
+
+    Args:
+        function_handle: the loader function you want to run.
+        regions: the region specifier
+        window_size: window around centers of regions, defaults to None
+        cores: process count across which to parallelize. Each individual region will only ever get one core.
+            (this is not currently implemented, so values not equal to 1 will do nothing different).
+        **kwargs: all necessary keyword arguments to pass down to the loader
+    """
+    regions_dict = utils.regions_dict_from_input(
+        regions,
+        window_size,
+    )
+    loaded_data_list = []
+    for chromosome, region_list in regions_dict.items():
+        for start_coord, end_coord, strand in region_list:
+            single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
+            loaded_data_list.append(
+                function_handle(regions=single_region_str, **kwargs)
+            )
+
+    return loaded_data_list
+
+
 def pileup_counts_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
