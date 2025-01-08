@@ -11,7 +11,7 @@ def plot_depth_profile(
     regions_list: list[str | Path | list[str | Path]],
     motifs: list[str],
     sample_names: list[str],
-    window_size: int,
+    window_size: int | None = None,
     single_strand: bool = False,
     regions_5to3prime: bool = False,
     smooth_window: int | None = None,
