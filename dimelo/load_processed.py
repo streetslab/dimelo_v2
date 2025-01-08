@@ -76,6 +76,60 @@ def regions_to_list(
     return results
 
 
+def process_pileup_row(
+    row: str,
+    parsed_motif: utils.ParsedMotif,
+    region_start: int,
+    region_end: int,
+    region_strand: str,
+    single_strand: bool,
+    regions_5to3prime: bool,
+) -> tuple[bool, int, int, int]:
+    """
+    Returns: keep_basemod, pileup_coord_relative, modified_in_row, valid_in_row
+    """
+    tabix_fields = row.split("\t")
+    pileup_basemod = tabix_fields[3]
+    pileup_strand = tabix_fields[5]
+    keep_basemod = False
+    if single_strand and pileup_strand.strip() != region_strand:
+        # We are on the wrong strand, skip the rest of the steps for this row
+        return keep_basemod, None, None, None
+    elif len(pileup_basemod.split(",")) == 3:
+        pileup_modname, pileup_motif, pileup_mod_coord = pileup_basemod.split(",")
+        if (
+            pileup_motif == parsed_motif.motif_seq
+            and int(pileup_mod_coord) == parsed_motif.modified_pos
+            and pileup_modname in parsed_motif.mod_codes
+        ):
+            keep_basemod = True
+    elif len(pileup_basemod.split(",")) == 1:
+        if pileup_basemod in parsed_motif.mod_codes:
+            keep_basemod = True
+    else:
+        raise ValueError(
+            f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
+        )
+    if keep_basemod:
+        pileup_info = tabix_fields[9].split(" ")
+        genomic_coord = int(tabix_fields[1])
+        if regions_5to3prime and region_strand == "-":
+            # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
+            # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
+            pileup_coord_relative = region_end - genomic_coord - 1
+        else:
+            # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
+            pileup_coord_relative = genomic_coord - region_start
+
+        valid_in_row = int(pileup_info[0])
+        modified_in_row = int(pileup_info[2])
+
+        return keep_basemod, pileup_coord_relative, modified_in_row, valid_in_row
+
+    else:
+        return keep_basemod, None, None, None
+
+
 def pileup_counts_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
@@ -129,64 +183,35 @@ def pileup_counts_from_bedmethyl(
                 # TODO: change to try-except
                 if chromosome in source_tabix.contigs:
                     for row in source_tabix.fetch(chromosome, start_coord, end_coord):
-                        # TODO Consider using csv module
-                        # TODO: probably this whole block should share logic with vectors_from_bedmethyl AND from export module functions
-                        tabix_fields = row.split("\t")
-                        pileup_basemod = tabix_fields[3]
-                        pileup_strand = tabix_fields[5]
-                        keep_basemod = False
-                        if single_strand and pileup_strand != strand:
-                            # This entry is on the wrong strand - skip it
-                            continue
-                        elif len(pileup_basemod.split(",")) == 3:
-                            pileup_modname, pileup_motif, pileup_mod_coord = (
-                                pileup_basemod.split(",")
+                        keep_basemod, _, modified_in_row, valid_in_row = (
+                            process_pileup_row(
+                                row=row,
+                                parsed_motif=parsed_motif,
+                                region_start=start_coord,
+                                region_end=end_coord,
+                                region_strand=strand,
+                                single_strand=single_strand,
+                                regions_5to3prime=False,
                             )
-                            if (
-                                pileup_motif == parsed_motif.motif_seq
-                                and int(pileup_mod_coord) == parsed_motif.modified_pos
-                                and pileup_modname in parsed_motif.mod_codes
-                            ):
-                                keep_basemod = True
-                        elif len(pileup_basemod.split(",")) == 1:
-                            if pileup_basemod in parsed_motif.mod_codes:
-                                keep_basemod = True
-                        else:
-                            raise ValueError(
-                                f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
-                            )
-                        # TODO: consolidate the above into a function; just do adding outside
+                        )
                         if keep_basemod:
-                            pileup_info = tabix_fields[9].split(" ")
-                            valid_base_count += int(pileup_info[0])
-                            modified_base_count += int(pileup_info[2])
+                            valid_base_count += valid_in_row
+                            modified_base_count += modified_in_row
     else:
         # Get counts from the whole input file
         for row in source_tabix.fetch():
-            tabix_fields = row.split("\t")
-            pileup_basemod = tabix_fields[3]
-            keep_basemod = False
-            if len(pileup_basemod.split(",")) == 3:
-                pileup_modname, pileup_motif, pileup_mod_coord = pileup_basemod.split(
-                    ","
-                )
-                if (
-                    pileup_motif == parsed_motif.motif_seq
-                    and int(pileup_mod_coord) == parsed_motif.modified_pos
-                    and pileup_modname in parsed_motif.mod_codes
-                ):
-                    keep_basemod = True
-            elif len(pileup_basemod.split(",")) == 1:
-                if pileup_basemod in parsed_motif.mod_codes:
-                    keep_basemod = True
-            else:
-                raise ValueError(
-                    f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
-                )
+            keep_basemod, _, modified_in_row, valid_in_row = process_pileup_row(
+                row=row,
+                parsed_motif=parsed_motif,
+                region_start=start_coord,
+                region_end=end_coord,
+                region_strand=strand,
+                single_strand=single_strand,
+                regions_5to3prime=False,
+            )
             if keep_basemod:
-                pileup_info = tabix_fields[9].split(" ")
-                valid_base_count += int(pileup_info[0])
-                modified_base_count += int(pileup_info[2])
+                valid_base_count += valid_in_row
+                modified_base_count += modified_in_row
 
     return (modified_base_count, valid_base_count)
 
@@ -267,55 +292,31 @@ def pileup_vectors_from_bedmethyl(
             # center_coord = (start_coord+end_coord)//2
             if chromosome in source_tabix.contigs:
                 for row in source_tabix.fetch(chromosome, start_coord, end_coord):
-                    # TODO: can we consolidate this with pileup_counts_from_bedmethyl?
-                    # Just the checks?
-                    # TODO: probably this whole block should share logic with counts_from_bedmethyl AND from export functions
-                    tabix_fields = row.split("\t")
-                    pileup_basemod = tabix_fields[3]
-                    pileup_strand = tabix_fields[5]
-                    keep_basemod = False
-                    if single_strand and pileup_strand.strip() != strand:
-                        # We are on the wrong strand, skip the rest of the steps for this row
-                        continue
-                    elif len(pileup_basemod.split(",")) == 3:
-                        pileup_modname, pileup_motif, pileup_mod_coord = (
-                            pileup_basemod.split(",")
-                        )
-                        if (
-                            pileup_motif == parsed_motif.motif_seq
-                            and int(pileup_mod_coord) == parsed_motif.modified_pos
-                            and pileup_modname in parsed_motif.mod_codes
-                        ):
-                            keep_basemod = True
-                    elif len(pileup_basemod.split(",")) == 1:
-                        if pileup_basemod in parsed_motif.mod_codes:
-                            keep_basemod = True
-                    else:
-                        raise ValueError(
-                            f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
-                        )
+                    (
+                        keep_basemod,
+                        pileup_coord_relative,
+                        modified_in_row,
+                        valid_in_row,
+                    ) = process_pileup_row(
+                        row=row,
+                        parsed_motif=parsed_motif,
+                        region_start=start_coord,
+                        region_end=end_coord,
+                        region_strand=strand,
+                        single_strand=single_strand,
+                        regions_5to3prime=regions_5to3prime,
+                    )
                     if keep_basemod:
-                        pileup_info = tabix_fields[9].split(" ")
-                        genomic_coord = int(tabix_fields[1])
-                        if regions_5to3prime and strand == "-":
-                            # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
-                            # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
-                            pileup_coord_relative = end_coord - genomic_coord - 1
-                        else:
-                            # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
-                            pileup_coord_relative = genomic_coord - start_coord
                         if pileup_coord_relative > region_len:
                             print(
                                 f"WARNING: You have specified a region {chromosome}:{start_coord}-{end_coord} that is longer than the first region; the end of the region will be skipped. To make a profile plot with differently-sized region, consider using the window_size parameter to make a profile across centered windows."
                             )
-                            break
                         else:
-                            valid_base_counts[pileup_coord_relative] += int(
-                                pileup_info[0]
+                            valid_base_counts[pileup_coord_relative] += valid_in_row
+                            modified_base_counts[pileup_coord_relative] += (
+                                modified_in_row
                             )
-                            modified_base_counts[pileup_coord_relative] += int(
-                                pileup_info[2]
-                            )
+
     return modified_base_counts, valid_base_counts
 
 
