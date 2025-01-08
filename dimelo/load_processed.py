@@ -133,7 +133,7 @@ def process_pileup_row(
 def pileup_counts_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
-    regions: str | Path | list[str | Path] | None = None,
+    regions: str | Path | list[str | Path],
     window_size: int | None = None,
     single_strand: bool = False,
     cores: int | None = None,  # currently unused
@@ -172,46 +172,28 @@ def pileup_counts_from_bedmethyl(
 
     parsed_motif = utils.ParsedMotif(motif)
 
-    if regions is not None:
-        # Get counts from the specified regions
-        regions_dict = utils.regions_dict_from_input(
-            regions,
-            window_size,
-        )
-        for chromosome, region_list in regions_dict.items():
-            for start_coord, end_coord, strand in region_list:
-                # TODO: change to try-except
-                if chromosome in source_tabix.contigs:
-                    for row in source_tabix.fetch(chromosome, start_coord, end_coord):
-                        keep_basemod, _, modified_in_row, valid_in_row = (
-                            process_pileup_row(
-                                row=row,
-                                parsed_motif=parsed_motif,
-                                region_start=start_coord,
-                                region_end=end_coord,
-                                region_strand=strand,
-                                single_strand=single_strand,
-                                regions_5to3prime=False,
-                            )
-                        )
-                        if keep_basemod:
-                            valid_base_count += valid_in_row
-                            modified_base_count += modified_in_row
-    else:
-        # Get counts from the whole input file
-        for row in source_tabix.fetch():
-            keep_basemod, _, modified_in_row, valid_in_row = process_pileup_row(
-                row=row,
-                parsed_motif=parsed_motif,
-                region_start=start_coord,
-                region_end=end_coord,
-                region_strand=strand,
-                single_strand=single_strand,
-                regions_5to3prime=False,
-            )
-            if keep_basemod:
-                valid_base_count += valid_in_row
-                modified_base_count += modified_in_row
+    # Get counts from the specified regions
+    regions_dict = utils.regions_dict_from_input(
+        regions,
+        window_size,
+    )
+    for chromosome, region_list in regions_dict.items():
+        for start_coord, end_coord, strand in region_list:
+            # TODO: change to try-except
+            if chromosome in source_tabix.contigs:
+                for row in source_tabix.fetch(chromosome, start_coord, end_coord):
+                    keep_basemod, _, modified_in_row, valid_in_row = process_pileup_row(
+                        row=row,
+                        parsed_motif=parsed_motif,
+                        region_start=start_coord,
+                        region_end=end_coord,
+                        region_strand=strand,
+                        single_strand=single_strand,
+                        regions_5to3prime=False,
+                    )
+                    if keep_basemod:
+                        valid_base_count += valid_in_row
+                        modified_base_count += modified_in_row
 
     return (modified_base_count, valid_base_count)
 
