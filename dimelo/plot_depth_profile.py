@@ -198,6 +198,7 @@ def get_depth_profiles(
                     window_size=window_size,
                     single_strand=single_strand,
                     regions_5to3prime=regions_5to3prime,
+                    quiet=False,
                 )
                 trace = valid_base_counts.astype(float)
                 trace[trace == 0] = np.nan

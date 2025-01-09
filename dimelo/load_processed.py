@@ -25,7 +25,9 @@ def regions_to_list(
     function_handle,
     regions,
     window_size: int | None = None,
+    quiet: bool = True,
     cores: int | None = None,
+    parallelize_within_regions: bool = False,
     **kwargs,
 ):
     """
@@ -53,29 +55,26 @@ def regions_to_list(
 
     cores_to_run = utils.cores_to_run(cores)
 
-    if cores_to_run > 1:
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=cores_to_run
-        ) as executor:
-            # Use functools.partial to pre-fill arguments
-            process_partial = partial(
-                process_region, function_handle=function_handle, cores=1, **kwargs
-            )
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=1 if parallelize_within_regions else cores_to_run
+    ) as executor:
+        # Use functools.partial to pre-fill arguments
+        process_partial = partial(
+            process_region,
+            function_handle=function_handle,
+            quiet=quiet or not parallelize_within_regions,
+            cores=cores_to_run if parallelize_within_regions else 1,
+            **kwargs,
+        )
 
-            # Use executor.map without lambda
-            results = list(
-                tqdm(
-                    executor.map(process_partial, region_tuples),
-                    total=len(region_tuples),
-                    desc=f"Processing regions in parallel across {cores_to_run}",
-                )
+        results = list(
+            tqdm(
+                executor.map(process_partial, region_tuples),
+                total=len(region_tuples),
+                desc=f"Processing regions in parallel across {cores_to_run}",
+                disable=quiet or parallelize_within_regions,
             )
-    else:
-        # Single-threaded fallback
-        results = [
-            process_region(region, function_handle, cores=1, **kwargs)
-            for region in tqdm(region_tuples, desc="Processing regions")
-        ]
+        )
 
     return results
 
@@ -128,13 +127,63 @@ def process_pileup_row(
     )
 
 
+def pileup_counts_process_chunk(
+    bedmethyl_file,
+    parsed_motif,
+    chunk,
+    shm_name_modified,
+    shm_name_valid,
+    lock,
+    single_strand,
+) -> None:
+    source_tabix = pysam.TabixFile(str(bedmethyl_file))
+    existing_valid = shared_memory.SharedMemory(name=shm_name_valid)
+    existing_modified = shared_memory.SharedMemory(name=shm_name_modified)
+    valid_base_counts = np.ndarray((1,), dtype=np.int32, buffer=existing_valid.buf)
+    modified_base_counts = np.ndarray(
+        (1,), dtype=np.int32, buffer=existing_modified.buf
+    )
+
+    chromosome = chunk["chromosome"]
+    subregion_start = chunk["subregion_start"]
+    subregion_end = chunk["subregion_end"]
+    strand = chunk["strand"]
+
+    valid_base_subregion_counts = 0
+    modified_base_subregion_counts = 0
+
+    for row in source_tabix.fetch(chromosome, subregion_start, subregion_end):
+        (
+            keep_basemod,
+            _,
+            modified_in_row,
+            valid_in_row,
+        ) = process_pileup_row(
+            row=row,
+            parsed_motif=parsed_motif,
+            region_start=subregion_start,
+            region_end=subregion_end,
+            region_strand=strand,
+            single_strand=single_strand,
+        )
+        if keep_basemod:
+            valid_base_subregion_counts += valid_in_row
+            modified_base_subregion_counts += modified_in_row
+
+    with lock:
+        valid_base_counts[0] += valid_base_subregion_counts
+        modified_base_counts[0] += modified_base_subregion_counts
+
+
 def pileup_counts_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
     regions: str | Path | list[str | Path],
     window_size: int | None = None,
     single_strand: bool = False,
-    cores: int | None = None,  # currently unused
+    quiet: bool = True,
+    cores: int | None = None,
+    chunk_size: int = 1_000_000,
 ) -> tuple[int, int]:
     """
     Extract number of modified bases and total number of bases from the given bedmethyl file.
@@ -157,46 +206,74 @@ def pileup_counts_from_bedmethyl(
         window_size: (currently disabled) window around center of region, +-window_size
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
-        cores: cores across which to parallelize processes (currently unused)
+        quiet: disables progress bars
+        cores: cores across which to parallelize processes
+        chunk_size: size of genomic subregions to assign out to each process
 
     Returns:
         tuple containing counts of (modified_bases, total_bases)
     """
 
-    source_tabix = pysam.TabixFile(str(bedmethyl_file))
-    # Don't need vectors, just need counts; also not guaranteed that windows are the same length
-    valid_base_count = 0
-    modified_base_count = 0
-
     parsed_motif = utils.ParsedMotif(motif)
 
-    # Get counts from the specified regions
-    regions_dict = utils.regions_dict_from_input(
-        regions,
-        window_size,
+    regions_dict = utils.regions_dict_from_input(regions, window_size)
+    chunks_list = utils.process_chunks_from_regions_dict(
+        regions_dict, chunk_size=chunk_size
     )
 
     cores_to_run = utils.cores_to_run(cores)
-    _ = cores_to_run
 
-    for chromosome, region_list in regions_dict.items():
-        for start_coord, end_coord, strand in region_list:
-            # TODO: change to try-except
-            if chromosome in source_tabix.contigs:
-                for row in source_tabix.fetch(chromosome, start_coord, end_coord):
-                    keep_basemod, _, modified_in_row, valid_in_row = process_pileup_row(
-                        row=row,
-                        parsed_motif=parsed_motif,
-                        region_start=start_coord,
-                        region_end=end_coord,
-                        region_strand=strand,
-                        single_strand=single_strand,
-                    )
-                    if keep_basemod:
-                        valid_base_count += valid_in_row
-                        modified_base_count += modified_in_row
+    shm_valid = shared_memory.SharedMemory(
+        create=True, size=np.dtype(np.int32).itemsize
+    )
+    shm_modified = shared_memory.SharedMemory(
+        create=True, size=np.dtype(np.int32).itemsize
+    )
 
-    return (modified_base_count, valid_base_count)
+    manager = multiprocessing.Manager()
+    lock = manager.Lock()
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=cores_to_run) as executor:
+        futures = [
+            executor.submit(
+                pileup_counts_process_chunk,
+                bedmethyl_file,
+                parsed_motif,
+                chunk,
+                shm_modified.name,
+                shm_valid.name,
+                lock,
+                single_strand,
+            )
+            for chunk in chunks_list
+        ]
+        for future in tqdm(
+            concurrent.futures.as_completed(futures),
+            total=len(futures),
+            disable=quiet,
+            desc=f"Loading genomic chunks, approx. {chunk_size/1000}kb per chunk",
+        ):
+            try:
+                future.result()
+            except Exception as err:
+                raise RuntimeError("Subprocess failed.") from err
+
+    # Directly convert shared memory buffers to integers
+    modified_base_count = int.from_bytes(
+        shm_modified.buf[:4], byteorder="little", signed=True
+    )
+    valid_base_count = int.from_bytes(
+        shm_valid.buf[:4], byteorder="little", signed=True
+    )
+
+    return modified_base_count, valid_base_count
+
+    # We need to convert these shared memory buffers to ints that are no longer tied to the buffer,
+    # so they can be passed up without any seg fault type errors
+    modified_base_counts = np.ndarray((1,), dtype=np.int32, buffer=shm_modified.buf)
+    valid_base_counts = np.ndarray((1,), dtype=np.int32, buffer=shm_valid.buf)
+
+    return int(np.copy(modified_base_counts[0])), int(np.copy(valid_base_counts[0]))
 
 
 def counts_from_fake(*args, **kwargs) -> tuple[int, int]:
@@ -253,7 +330,7 @@ def pileup_vectors_process_chunk(
     valid_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
     modified_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
 
-    for row in source_tabix.fetch(chunk["chromosome"], subregion_start, subregion_end):
+    for row in source_tabix.fetch(chromosome, subregion_start, subregion_end):
         (
             keep_basemod,
             genomic_coord,
@@ -295,8 +372,9 @@ def pileup_vectors_from_bedmethyl(
     window_size: int | None = None,
     single_strand: bool = False,
     regions_5to3prime: bool = False,
+    quiet: bool = True,
     cores: int | None = None,
-    chunk_size: int = 100,
+    chunk_size: int = 1_000_000,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Extract per-position pileup counts at valid motifs across one or more superimposed regions.
@@ -328,13 +406,13 @@ def pileup_vectors_from_bedmethyl(
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
         regions_5to3prime: True means negative strand regions get flipped, False means no flipping
-        cores: cores across which to parallelize processes (currently unused)
+        quiet: disables progress bars
+        cores: cores across which to parallelize processes
+        chunk_size: size of genomic subregions to assign out to each process
 
     Returns:
         tuple containing (modified_base_counts, valid_base_counts)
     """
-
-    print(f"function call: {bedmethyl_file}, {regions}, {motif}")
 
     parsed_motif = utils.ParsedMotif(motif)
 
@@ -377,13 +455,19 @@ def pileup_vectors_from_bedmethyl(
             for chunk in chunks_list
         ]
         for future in tqdm(
-            concurrent.futures.as_completed(futures), total=len(futures)
+            concurrent.futures.as_completed(futures),
+            total=len(futures),
+            disable=quiet,
+            desc=f"Loading genomic chunks, approx. {chunk_size/1000}kb per chunk",
         ):
             try:
                 future.result()
             except Exception as err:
                 raise RuntimeError("Subprocess failed.") from err
 
+    # We need to convert these shared memory buffers to numpy arrays which
+    # we then copy, so that they no longer reference the shared memory which
+    # will soon be de-allocated
     modified_base_counts = np.ndarray(
         (region_len,), dtype=np.int32, buffer=shm_modified.buf
     )
@@ -416,6 +500,7 @@ def read_vectors_from_hdf5(
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     calculate_mod_fractions: bool = True,
     cores: int | None = None,  # currently unused
+    quiet: bool = True,  # currently unused
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
     Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
@@ -458,6 +543,7 @@ def read_vectors_from_hdf5(
             include chromosome, region_start, region_end, read_start, read_end, and motif. More to
             be added in future.
         cores: cores across which to parallelize processes (currently unused)
+        quiet: silences progress bars (currently unused)
 
     Returns:
         a list of tuples, each tuple containing all datasets corresponding to an individual read that
