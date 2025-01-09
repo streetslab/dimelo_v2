@@ -103,7 +103,7 @@ def pileup_to_bigwig(
                 total=contig_lines[contig],
                 leave=False,
             ):
-                keep_basemod, genomic_coord, modified_in_row, valid_in_row, _ = (
+                keep_basemod, genomic_coord, modified_in_row, valid_in_row = (
                     load_processed.process_pileup_row(
                         row=row,
                         parsed_motif=parsed_motif,
@@ -111,7 +111,6 @@ def pileup_to_bigwig(
                         region_end=contig_lengths[contig],
                         region_strand=strand,
                         single_strand=(strand != "."),
-                        regions_5to3prime=False,
                     )
                 )
                 if keep_basemod and valid_in_row > 0:

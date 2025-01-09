@@ -86,18 +86,11 @@ def process_pileup_row(
     region_start: int,
     region_end: int,
     region_strand: str,
-    subregion_start: int | None = None,
-    subregion_end: int | None = None,
     single_strand: bool = False,
-    regions_5to3prime: bool = False,
-) -> tuple[bool, int, int, int, int]:
+) -> tuple[bool, int, int, int]:
     """
-    Returns: keep_basemod, pileup_coord_relative, modified_in_row, valid_in_row
+    Returns: keep_basemod, genomic_coord, modified_in_row, valid_in_row
     """
-    if subregion_start is None:
-        subregion_start = region_start
-    if subregion_end is None:
-        subregion_end = region_end
     tabix_fields = row.split("\t")
     pileup_basemod = tabix_fields[3]
     pileup_strand = tabix_fields[5]
@@ -124,26 +117,14 @@ def process_pileup_row(
 
     pileup_info = tabix_fields[9].split(" ")
     genomic_coord = int(tabix_fields[1])
-    # TODO: consider moving this logic back outside of process_pileup_row, to avoid unecessary operations for both pileup_counts
-    # and for long regions that only need the offset value once
-    if regions_5to3prime and region_strand == "-":
-        # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
-        # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
-        pileup_coord_relative = subregion_end - genomic_coord - 1
-        subregion_offset = region_end - subregion_end
-    else:
-        # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
-        pileup_coord_relative = genomic_coord - subregion_start
-        subregion_offset = subregion_start - region_start
     valid_in_row = int(pileup_info[0])
     modified_in_row = int(pileup_info[2])
 
     return (
         keep_basemod,
-        pileup_coord_relative,
+        genomic_coord,
         modified_in_row,
         valid_in_row,
-        subregion_offset,
     )
 
 
@@ -203,16 +184,13 @@ def pileup_counts_from_bedmethyl(
             # TODO: change to try-except
             if chromosome in source_tabix.contigs:
                 for row in source_tabix.fetch(chromosome, start_coord, end_coord):
-                    keep_basemod, _, modified_in_row, valid_in_row, _ = (
-                        process_pileup_row(
-                            row=row,
-                            parsed_motif=parsed_motif,
-                            region_start=start_coord,
-                            region_end=end_coord,
-                            region_strand=strand,
-                            single_strand=single_strand,
-                            regions_5to3prime=False,
-                        )
+                    keep_basemod, _, modified_in_row, valid_in_row = process_pileup_row(
+                        row=row,
+                        parsed_motif=parsed_motif,
+                        region_start=start_coord,
+                        region_end=end_coord,
+                        region_strand=strand,
+                        single_strand=single_strand,
                     )
                     if keep_basemod:
                         valid_base_count += valid_in_row
@@ -260,7 +238,17 @@ def pileup_vectors_process_chunk(
     subregion_end = chunk["subregion_end"]
     strand = chunk["strand"]
 
-    subregion_offset = 0
+    flip_coords = regions_5to3prime and strand == "-"
+
+    if flip_coords:
+        subregion_offset = region_end - subregion_end
+    else:
+        subregion_offset = subregion_start - region_start
+
+    if region_end - region_start > region_len:
+        print(
+            f"WARNING: You have specified a region at {chromosome}:{region_start}-{region_end} that is longer than the first region; the end of the region will be skipped. To make a profile plot with differently-sized region, consider using the window_size parameter to make a profile across centered windows."
+        )
 
     valid_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
     modified_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
@@ -268,29 +256,28 @@ def pileup_vectors_process_chunk(
     for row in source_tabix.fetch(chunk["chromosome"], subregion_start, subregion_end):
         (
             keep_basemod,
-            pileup_coord_relative,
+            genomic_coord,
             modified_in_row,
             valid_in_row,
-            subregion_offset,
         ) = process_pileup_row(
             row=row,
             parsed_motif=parsed_motif,
-            region_start=region_start,
-            region_end=region_end,
-            subregion_start=subregion_start,
-            subregion_end=subregion_end,
+            region_start=subregion_start,
+            region_end=subregion_end,
             region_strand=strand,
             single_strand=single_strand,
-            regions_5to3prime=regions_5to3prime,
         )
         if keep_basemod:
-            if pileup_coord_relative > region_len:
-                print(
-                    f"WARNING: You have specified a region starting at {chromosome}:{subregion_start - subregion_offset} that is longer than the first region; the end of the region will be skipped. To make a profile plot with differently-sized region, consider using the window_size parameter to make a profile across centered windows."
-                )
+            if flip_coords:
+                # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
+                # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
+                pileup_coord_in_subregion = subregion_end - genomic_coord - 1
             else:
-                valid_base_subregion[pileup_coord_relative] += valid_in_row
-                modified_base_subregion[pileup_coord_relative] += modified_in_row
+                # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
+                pileup_coord_in_subregion = genomic_coord - subregion_start
+            if pileup_coord_in_subregion < (subregion_end - subregion_start):
+                valid_base_subregion[pileup_coord_in_subregion] += valid_in_row
+                modified_base_subregion[pileup_coord_in_subregion] += modified_in_row
 
     with lock:
         valid_base_counts[
@@ -308,7 +295,8 @@ def pileup_vectors_from_bedmethyl(
     window_size: int | None = None,
     single_strand: bool = False,
     regions_5to3prime: bool = False,
-    cores: int | None = None,  # currently unused
+    cores: int | None = None,
+    chunk_size: int = 100,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Extract per-position pileup counts at valid motifs across one or more superimposed regions.
@@ -351,7 +339,9 @@ def pileup_vectors_from_bedmethyl(
     parsed_motif = utils.ParsedMotif(motif)
 
     regions_dict = utils.regions_dict_from_input(regions, window_size)
-    chunks_list = utils.process_chunks_from_regions_dict(regions_dict, chunk_size=1_000)
+    chunks_list = utils.process_chunks_from_regions_dict(
+        regions_dict, chunk_size=chunk_size
+    )
 
     cores_to_run = utils.cores_to_run(cores)
 
