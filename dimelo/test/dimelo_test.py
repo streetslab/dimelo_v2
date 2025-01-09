@@ -317,7 +317,7 @@ class TestLoadProcessed:
     outputs section of dimelo/test/generate_test_targets.ipynb.
     """
 
-    def test_unit__regions_list_list(
+    def test_unit__regions_to_list(
         self,
         test_case,
         kwargs,

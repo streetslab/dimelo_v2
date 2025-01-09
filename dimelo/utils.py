@@ -98,6 +98,28 @@ def adjust_threshold(
     return thresh
 
 
+def process_chunks_from_regions_dict(
+    regions_dict: dict,
+    chunk_size: int = 10_000,
+):
+    chunk_list = []
+    for chromosome, region_list in regions_dict.items():
+        for start_coord, end_coord, strand in region_list:
+            for subregion_start in range(start_coord, end_coord, chunk_size):
+                subregion_end = min(end_coord, subregion_start + chunk_size)
+                chunk_list.append(
+                    {
+                        "chromosome": chromosome,
+                        "region_start": start_coord,
+                        "region_end": end_coord,
+                        "subregion_start": subregion_start,
+                        "subregion_end": subregion_end,
+                        "strand": strand,
+                    }
+                )
+    return chunk_list
+
+
 def regions_dict_from_input(
     regions: str | Path | list[str | Path] | None = None,
     window_size: int | None = None,
