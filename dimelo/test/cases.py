@@ -31,6 +31,8 @@ test_matrix = {
             "sort_by": ["read_start", "read_name", "motif"],
             "smooth_window": 1,
             "title": "megalodon_peaks_190",
+            "single_strand": False,
+            "regions_5to3prime": False,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -48,6 +50,8 @@ test_matrix = {
             "sort_by": ["read_start", "read_name", "motif"],
             "smooth_window": 10,
             "title": "megalodon_single_190",
+            "single_strand": False,
+            "regions_5to3prime": False,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -65,6 +69,8 @@ test_matrix = {
             "sort_by": ["read_start", "read_name", "motif"],
             "smooth_window": 100,
             "title": "megalodon_single_and_peaks_190",
+            "single_strand": True,
+            "regions_5to3prime": True,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -82,6 +88,8 @@ test_matrix = {
             "sort_by": ["read_start", "read_name", "motif"],
             "smooth_window": 100,
             "title": "megalodon_peaks_nothresh",
+            "single_strand": True,
+            "regions_5to3prime": False,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -99,6 +107,8 @@ test_matrix = {
             "sort_by": ["read_start", "read_name", "motif"],
             "smooth_window": 1,
             "title": "megalodon_single_nothresh",
+            "single_strand": False,
+            "regions_5to3prime": True,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
