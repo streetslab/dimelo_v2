@@ -33,6 +33,7 @@ test_matrix = {
             "title": "megalodon_peaks_190",
             "single_strand": False,
             "regions_5to3prime": False,
+            "chunk_size": 1_000_000,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -52,6 +53,7 @@ test_matrix = {
             "title": "megalodon_single_190",
             "single_strand": False,
             "regions_5to3prime": False,
+            "chunk_size": 100,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -71,6 +73,7 @@ test_matrix = {
             "title": "megalodon_single_and_peaks_190",
             "single_strand": True,
             "regions_5to3prime": True,
+            "chunk_size": 10_000,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -90,6 +93,7 @@ test_matrix = {
             "title": "megalodon_peaks_nothresh",
             "single_strand": True,
             "regions_5to3prime": False,
+            "chunk_size": 1000,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -109,6 +113,7 @@ test_matrix = {
             "title": "megalodon_single_nothresh",
             "single_strand": False,
             "regions_5to3prime": True,
+            "chunk_size": 100,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
