@@ -103,7 +103,7 @@ def pileup_to_bigwig(
                 total=contig_lines[contig],
                 leave=False,
             ):
-                keep_basemod, genomic_coord, modified_in_row, valid_in_row = (
+                keep_basemod, genomic_coord, modified_in_row, valid_in_row, _ = (
                     load_processed.process_pileup_row(
                         row=row,
                         parsed_motif=parsed_motif,

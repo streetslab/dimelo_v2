@@ -101,10 +101,10 @@ def process_pileup_row(
     tabix_fields = row.split("\t")
     pileup_basemod = tabix_fields[3]
     pileup_strand = tabix_fields[5]
-    keep_basemod = False
+
     if single_strand and pileup_strand.strip() != region_strand:
-        # We are on the wrong strand, skip the rest of the steps for this row
-        return keep_basemod, 0, 0, 0, 0
+        # We are on the wrong strand, can't keep this position
+        keep_basemod = False
     elif len(pileup_basemod.split(",")) == 3:
         pileup_modname, pileup_motif, pileup_mod_coord = pileup_basemod.split(",")
         if (
@@ -113,9 +113,10 @@ def process_pileup_row(
             and pileup_modname in parsed_motif.mod_codes
         ):
             keep_basemod = True
+        else:
+            keep_basemod = False
     elif len(pileup_basemod.split(",")) == 1:
-        if pileup_basemod in parsed_motif.mod_codes:
-            keep_basemod = True
+        keep_basemod = pileup_basemod in parsed_motif.mod_codes
     else:
         raise ValueError(
             f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
@@ -123,6 +124,8 @@ def process_pileup_row(
 
     pileup_info = tabix_fields[9].split(" ")
     genomic_coord = int(tabix_fields[1])
+    # TODO: consider moving this logic back outside of process_pileup_row, to avoid unecessary operations for both pileup_counts
+    # and for long regions that only need the offset value once
     if regions_5to3prime and region_strand == "-":
         # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
         # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
@@ -290,7 +293,6 @@ def pileup_vectors_process_chunk(
                 modified_base_subregion[pileup_coord_relative] += modified_in_row
 
     with lock:
-        print(subregion_offset)
         valid_base_counts[
             subregion_offset : subregion_offset + abs(subregion_end - subregion_start)
         ] += valid_base_subregion
@@ -349,12 +351,7 @@ def pileup_vectors_from_bedmethyl(
     parsed_motif = utils.ParsedMotif(motif)
 
     regions_dict = utils.regions_dict_from_input(regions, window_size)
-    chunks_list = utils.process_chunks_from_regions_dict(
-        regions_dict, chunk_size=10_000
-    )
-
-    print(regions_dict)
-    print(chunks_list)
+    chunks_list = utils.process_chunks_from_regions_dict(regions_dict, chunk_size=1_000)
 
     cores_to_run = utils.cores_to_run(cores)
 
