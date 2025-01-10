@@ -14,11 +14,9 @@ from tqdm.auto import tqdm
 
 from . import test_data, utils
 
-
-def process_region(region_tuple, function_handle, **kwargs):
-    chromosome, start_coord, end_coord, strand = region_tuple
-    single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
-    return function_handle(regions=single_region_str, **kwargs)
+################################################################################################################
+####                                           Loader wrappers                                              ####
+################################################################################################################
 
 
 def regions_to_list(
@@ -31,6 +29,8 @@ def regions_to_list(
     **kwargs,
 ):
     """
+    User-facing function.
+
     Run any standard load_processed pileup or extract loader loading each region from the region
     specifier into a new element of a list.
 
@@ -40,6 +40,9 @@ def regions_to_list(
         window_size: window around centers of regions, defaults to None
         cores: process count across which to parallelize. Each individual region will only ever get one core.
         **kwargs: all necessary keyword arguments to pass down to the loader
+
+    Returns:
+        list([function_handle returns for region in regions])
     """
     regions_dict = utils.regions_dict_from_input(
         regions,
@@ -79,103 +82,26 @@ def regions_to_list(
     return results
 
 
-def process_pileup_row(
-    row: str,
-    parsed_motif: utils.ParsedMotif,
-    region_start: int,
-    region_end: int,
-    region_strand: str,
-    single_strand: bool = False,
-) -> tuple[bool, int, int, int]:
+def process_region(region_tuple, function_handle, **kwargs):
     """
-    Returns: keep_basemod, genomic_coord, modified_in_row, valid_in_row
+    Helper function for regions_to_list. Takes in the region tuple, creates a string, and runs the loader function.
+
+    Args:
+        region_tuple: chromosome, start, end, strand
+        function_handle: a function that takes a regions specifier and loads processed data
+        **kwargs: the remaining kwargs necessary to run the function in question
+
+    Returns:
+        Whatever function_handle returns
     """
-    tabix_fields = row.split("\t")
-    pileup_basemod = tabix_fields[3]
-    pileup_strand = tabix_fields[5]
-
-    if single_strand and pileup_strand.strip() != region_strand:
-        # We are on the wrong strand, can't keep this position
-        keep_basemod = False
-    elif len(pileup_basemod.split(",")) == 3:
-        pileup_modname, pileup_motif, pileup_mod_coord = pileup_basemod.split(",")
-        if (
-            pileup_motif == parsed_motif.motif_seq
-            and int(pileup_mod_coord) == parsed_motif.modified_pos
-            and pileup_modname in parsed_motif.mod_codes
-        ):
-            keep_basemod = True
-        else:
-            keep_basemod = False
-    elif len(pileup_basemod.split(",")) == 1:
-        keep_basemod = pileup_basemod in parsed_motif.mod_codes
-    else:
-        raise ValueError(
-            f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
-        )
-
-    pileup_info = tabix_fields[9].split(" ")
-    genomic_coord = int(tabix_fields[1])
-    valid_in_row = int(pileup_info[0])
-    modified_in_row = int(pileup_info[2])
-
-    return (
-        keep_basemod,
-        genomic_coord,
-        modified_in_row,
-        valid_in_row,
-    )
+    chromosome, start_coord, end_coord, strand = region_tuple
+    single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
+    return function_handle(regions=single_region_str, **kwargs)
 
 
-def pileup_counts_process_chunk(
-    bedmethyl_file,
-    parsed_motif,
-    chunk,
-    shm_name_modified,
-    shm_name_valid,
-    lock,
-    single_strand,
-) -> None:
-    source_tabix = pysam.TabixFile(str(bedmethyl_file))
-    existing_valid = shared_memory.SharedMemory(name=shm_name_valid)
-    existing_modified = shared_memory.SharedMemory(name=shm_name_modified)
-    valid_base_counts = np.ndarray((1,), dtype=np.int32, buffer=existing_valid.buf)
-    modified_base_counts = np.ndarray(
-        (1,), dtype=np.int32, buffer=existing_modified.buf
-    )
-
-    chromosome = chunk["chromosome"]
-    subregion_start = chunk["subregion_start"]
-    subregion_end = chunk["subregion_end"]
-    strand = chunk["strand"]
-
-    valid_base_subregion_counts = 0
-    modified_base_subregion_counts = 0
-
-    for row in source_tabix.fetch(chromosome, max(subregion_start, 0), subregion_end):
-        (
-            keep_basemod,
-            _,
-            modified_in_row,
-            valid_in_row,
-        ) = process_pileup_row(
-            row=row,
-            parsed_motif=parsed_motif,
-            region_start=subregion_start,
-            region_end=subregion_end,
-            region_strand=strand,
-            single_strand=single_strand,
-        )
-        if keep_basemod:
-            valid_base_subregion_counts += valid_in_row
-            modified_base_subregion_counts += modified_in_row
-
-    with lock:
-        valid_base_counts[0] += valid_base_subregion_counts
-        modified_base_counts[0] += modified_base_subregion_counts
-    # Close the file descriptor/handle to the shared memory
-    existing_valid.close()
-    existing_modified.close()
+################################################################################################################
+####                                           Pileup loaders                                               ####
+################################################################################################################
 
 
 def pileup_counts_from_bedmethyl(
@@ -189,6 +115,8 @@ def pileup_counts_from_bedmethyl(
     chunk_size: int = 1_000_000,
 ) -> tuple[int, int]:
     """
+    User-facing function.
+
     Extract number of modified bases and total number of bases from the given bedmethyl file.
     Called by plotters or by the user.
 
@@ -259,7 +187,7 @@ def pileup_counts_from_bedmethyl(
             try:
                 future.result()
             except Exception as err:
-                raise RuntimeError("Subprocess failed.") from err
+                raise RuntimeError("pileup_counts_process_chunk failed.") from err
 
     # Directly convert shared memory buffers to integers
     modified_base_count = int.from_bytes(
@@ -277,98 +205,6 @@ def pileup_counts_from_bedmethyl(
     return modified_base_count, valid_base_count
 
 
-def counts_from_fake(*args, **kwargs) -> tuple[int, int]:
-    """
-    Generates a fake set of enrichment counts. Ignores all arguments.
-
-    Returns:
-        tuple containing counts of (modified_bases, total_bases)
-    """
-    window_halfsize = 500
-    return test_data.fake_peak_enrichment(halfsize=window_halfsize, peak_height=0.15)
-
-
-def pileup_vectors_process_chunk(
-    bedmethyl_file,
-    parsed_motif,
-    chunk,
-    region_len,
-    shm_name_modified,
-    shm_name_valid,
-    lock,
-    single_strand,
-    regions_5to3prime,
-) -> None:
-    source_tabix = pysam.TabixFile(str(bedmethyl_file))
-    existing_valid = shared_memory.SharedMemory(name=shm_name_valid)
-    existing_modified = shared_memory.SharedMemory(name=shm_name_modified)
-    valid_base_counts = np.ndarray(
-        (region_len,), dtype=np.int32, buffer=existing_valid.buf
-    )
-    modified_base_counts = np.ndarray(
-        (region_len,), dtype=np.int32, buffer=existing_modified.buf
-    )
-
-    chromosome = chunk["chromosome"]
-    region_start = chunk["region_start"]
-    region_end = chunk["region_end"]
-    subregion_start = chunk["subregion_start"]
-    subregion_end = chunk["subregion_end"]
-    strand = chunk["strand"]
-
-    flip_coords = regions_5to3prime and strand == "-"
-
-    if flip_coords:
-        subregion_offset = region_end - subregion_end
-    else:
-        subregion_offset = subregion_start - region_start
-
-    if region_end - region_start > region_len:
-        print(
-            f"WARNING: You have specified a region at {chromosome}:{region_start}-{region_end} that is longer than the first region; the end of the region will be skipped. To make a profile plot with differently-sized region, consider using the window_size parameter to make a profile across centered windows."
-        )
-
-    valid_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
-    modified_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
-
-    for row in source_tabix.fetch(chromosome, max(subregion_start, 0), subregion_end):
-        (
-            keep_basemod,
-            genomic_coord,
-            modified_in_row,
-            valid_in_row,
-        ) = process_pileup_row(
-            row=row,
-            parsed_motif=parsed_motif,
-            region_start=subregion_start,
-            region_end=subregion_end,
-            region_strand=strand,
-            single_strand=single_strand,
-        )
-        if keep_basemod:
-            if flip_coords:
-                # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
-                # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
-                pileup_coord_in_subregion = subregion_end - genomic_coord - 1
-            else:
-                # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
-                pileup_coord_in_subregion = genomic_coord - subregion_start
-            if pileup_coord_in_subregion < (subregion_end - subregion_start):
-                valid_base_subregion[pileup_coord_in_subregion] += valid_in_row
-                modified_base_subregion[pileup_coord_in_subregion] += modified_in_row
-
-    with lock:
-        valid_base_counts[
-            subregion_offset : subregion_offset + abs(subregion_end - subregion_start)
-        ] += valid_base_subregion
-        modified_base_counts[
-            subregion_offset : subregion_offset + abs(subregion_end - subregion_start)
-        ] += modified_base_subregion
-    # Close the file descriptor/handle to the shared memory
-    existing_modified.close()
-    existing_valid.close()
-
-
 def pileup_vectors_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
@@ -381,6 +217,8 @@ def pileup_vectors_from_bedmethyl(
     chunk_size: int = 1_000_000,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
+    User-facing function.
+
     Extract per-position pileup counts at valid motifs across one or more superimposed regions.
     Called by profile plotters, can also be used by a user directly.
 
@@ -467,7 +305,7 @@ def pileup_vectors_from_bedmethyl(
             try:
                 future.result()
             except Exception as err:
-                raise RuntimeError("Subprocess failed.") from err
+                raise RuntimeError("pileup_vectors_process_chunk failed.") from err
 
     # We need to convert these shared memory buffers to numpy arrays which
     # we then copy, so that they no longer reference the shared memory which
@@ -487,8 +325,23 @@ def pileup_vectors_from_bedmethyl(
     return modified_base_counts, valid_base_counts
 
 
+def counts_from_fake(*args, **kwargs) -> tuple[int, int]:
+    """
+    Test helper function.
+
+    Generates a fake set of enrichment counts. Ignores all arguments.
+
+    Returns:
+        tuple containing counts of (modified_bases, total_bases)
+    """
+    window_halfsize = 500
+    return test_data.fake_peak_enrichment(halfsize=window_halfsize, peak_height=0.15)
+
+
 def vector_from_fake(window_size: int, *args, **kwargs) -> np.ndarray:
     """
+    Tes helper function.
+
     Generates a fake peak trace. Ignores all arguments except window_size.
 
     Args:
@@ -500,6 +353,233 @@ def vector_from_fake(window_size: int, *args, **kwargs) -> np.ndarray:
     return test_data.fake_peak_enrichment_profile(
         halfsize=window_size, peak_height=0.15
     )
+
+
+def pileup_vectors_process_chunk(
+    bedmethyl_file,
+    parsed_motif,
+    chunk,
+    region_len,
+    shm_name_modified,
+    shm_name_valid,
+    lock,
+    single_strand,
+    regions_5to3prime,
+) -> None:
+    """
+    Helper function to allow pileup_vectors_from_bedmethyl to operate in a parallized fashion.
+
+    Sum up modified and valid counts for a subregion chunk in a bedmethyl file.
+
+    Args:
+        bedmethyl_file: Path to bedmethyl file
+        parsed_motif: ParsedMotif object
+        chunk: a dict containing subregion chunk information
+        shm_name_modified: the name string for the shared memory location containing the modified counts array
+        shm_name_valid: the name string for the shared memory location containing the valid counts array
+        lock: a manager.Lock object to allow synchronization in accessing shared memory
+        single_strand: True if only single-strand mods are desired
+
+    Returns:
+        None. Counts are added in-place to shared memory.
+    """
+    source_tabix = pysam.TabixFile(str(bedmethyl_file))
+    existing_valid = shared_memory.SharedMemory(name=shm_name_valid)
+    existing_modified = shared_memory.SharedMemory(name=shm_name_modified)
+    valid_base_counts = np.ndarray(
+        (region_len,), dtype=np.int32, buffer=existing_valid.buf
+    )
+    modified_base_counts = np.ndarray(
+        (region_len,), dtype=np.int32, buffer=existing_modified.buf
+    )
+
+    chromosome = chunk["chromosome"]
+    region_start = chunk["region_start"]
+    region_end = chunk["region_end"]
+    subregion_start = chunk["subregion_start"]
+    subregion_end = chunk["subregion_end"]
+    strand = chunk["strand"]
+
+    flip_coords = regions_5to3prime and strand == "-"
+
+    if flip_coords:
+        subregion_offset = region_end - subregion_end
+    else:
+        subregion_offset = subregion_start - region_start
+
+    if region_end - region_start > region_len:
+        print(
+            f"WARNING: You have specified a region at {chromosome}:{region_start}-{region_end} that is longer than the first region; the end of the region will be skipped. To make a profile plot with differently-sized region, consider using the window_size parameter to make a profile across centered windows."
+        )
+
+    valid_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
+    modified_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
+
+    for row in source_tabix.fetch(chromosome, max(subregion_start, 0), subregion_end):
+        (
+            keep_basemod,
+            genomic_coord,
+            modified_in_row,
+            valid_in_row,
+        ) = process_pileup_row(
+            row=row,
+            parsed_motif=parsed_motif,
+            region_strand=strand,
+            single_strand=single_strand,
+        )
+        if keep_basemod:
+            if flip_coords:
+                # We want to flip the coordinates for this region so that it is recorded along the 5 prime to 3 prime direction
+                # This will enable analyses where the orientation of protein binding / transcriptional dynamics / etc is relevant for our pileup signal
+                pileup_coord_in_subregion = subregion_end - genomic_coord - 1
+            else:
+                # Normal coordinates are the default. This will be used both for the '+' case and the '.' (no strand specified) case
+                pileup_coord_in_subregion = genomic_coord - subregion_start
+            if pileup_coord_in_subregion < (subregion_end - subregion_start):
+                valid_base_subregion[pileup_coord_in_subregion] += valid_in_row
+                modified_base_subregion[pileup_coord_in_subregion] += modified_in_row
+
+    with lock:
+        valid_base_counts[
+            subregion_offset : subregion_offset + abs(subregion_end - subregion_start)
+        ] += valid_base_subregion
+        modified_base_counts[
+            subregion_offset : subregion_offset + abs(subregion_end - subregion_start)
+        ] += modified_base_subregion
+    # Close the file descriptor/handle to the shared memory
+    existing_modified.close()
+    existing_valid.close()
+
+
+def pileup_counts_process_chunk(
+    bedmethyl_file,
+    parsed_motif,
+    chunk,
+    shm_name_modified,
+    shm_name_valid,
+    lock,
+    single_strand,
+) -> None:
+    """
+    Helper function to allow pileup_counts_from_bedmethyl to operate in a parallized fashion.
+
+    Sum up modified and valid counts for a subregion chunk in a bedmethyl file.
+
+    Args:
+        bedmethyl_file: Path to bedmethyl file
+        parsed_motif: ParsedMotif object
+        chunk: a dict containing subregion chunk information
+        shm_name_modified: the name string for the shared memory location containing the modified counts sum
+        shm_name_valid: the name string for the shared memory location containing the valid counts sum
+        lock: a manager.Lock object to allow synchronization in accessing shared memory
+        single_strand: True if only single-strand mods are desired
+
+    Returns:
+        None. Counts are added in-place to shared memory.
+    """
+    source_tabix = pysam.TabixFile(str(bedmethyl_file))
+    existing_valid = shared_memory.SharedMemory(name=shm_name_valid)
+    existing_modified = shared_memory.SharedMemory(name=shm_name_modified)
+    valid_base_counts = np.ndarray((1,), dtype=np.int32, buffer=existing_valid.buf)
+    modified_base_counts = np.ndarray(
+        (1,), dtype=np.int32, buffer=existing_modified.buf
+    )
+
+    chromosome = chunk["chromosome"]
+    subregion_start = chunk["subregion_start"]
+    subregion_end = chunk["subregion_end"]
+    strand = chunk["strand"]
+
+    valid_base_subregion_counts = 0
+    modified_base_subregion_counts = 0
+
+    for row in source_tabix.fetch(chromosome, max(subregion_start, 0), subregion_end):
+        (
+            keep_basemod,
+            _,
+            modified_in_row,
+            valid_in_row,
+        ) = process_pileup_row(
+            row=row,
+            parsed_motif=parsed_motif,
+            region_strand=strand,
+            single_strand=single_strand,
+        )
+        if keep_basemod:
+            valid_base_subregion_counts += valid_in_row
+            modified_base_subregion_counts += modified_in_row
+
+    with lock:
+        valid_base_counts[0] += valid_base_subregion_counts
+        modified_base_counts[0] += modified_base_subregion_counts
+
+    # Close the file descriptor/handle to the shared memory
+    existing_valid.close()
+    existing_modified.close()
+
+
+def process_pileup_row(
+    row: str,
+    parsed_motif: utils.ParsedMotif,
+    region_strand: str,
+    single_strand: bool = False,
+) -> tuple[bool, int, int, int]:
+    """
+    Helper function designed for pileup_counts_from_bedmethyl via pileup_counts_process_chunk, pileup_vectors_from_bedmethyl
+    via pileup_vectors_process_chunk, and export.pileup_to_bigwig; changed to logic here may impact some or all of
+    these.
+
+    Process a row from a pileup, determining whether the basemod is relevant and passing back its coordinate,
+    modification count, and valid read count.
+
+    Args:
+        row: a string row from a bedmethyl file
+        parsed_motif: a ParsedMotif object
+        region_strand: the strand from the query region
+        single_strand: True if only mods on the region_strand are to be kept
+
+    Returns: keep_basemod, genomic_coord, modified_in_row, valid_in_row
+    """
+    tabix_fields = row.split("\t")
+    pileup_basemod = tabix_fields[3]
+    pileup_strand = tabix_fields[5]
+
+    if single_strand and pileup_strand.strip() != region_strand:
+        # We are on the wrong strand, can't keep this position
+        keep_basemod = False
+    elif len(pileup_basemod.split(",")) == 3:
+        pileup_modname, pileup_motif, pileup_mod_coord = pileup_basemod.split(",")
+        if (
+            pileup_motif == parsed_motif.motif_seq
+            and int(pileup_mod_coord) == parsed_motif.modified_pos
+            and pileup_modname in parsed_motif.mod_codes
+        ):
+            keep_basemod = True
+        else:
+            keep_basemod = False
+    elif len(pileup_basemod.split(",")) == 1:
+        keep_basemod = pileup_basemod in parsed_motif.mod_codes
+    else:
+        raise ValueError(
+            f"Unexpected format in bedmethyl file: {row} contains {pileup_basemod} which cannot be parsed."
+        )
+
+    pileup_info = tabix_fields[9].split(" ")
+    genomic_coord = int(tabix_fields[1])
+    valid_in_row = int(pileup_info[0])
+    modified_in_row = int(pileup_info[2])
+
+    return (
+        keep_basemod,
+        genomic_coord,
+        modified_in_row,
+        valid_in_row,
+    )
+
+
+################################################################################################################
+####                                        Single read loaders                                             ####
+################################################################################################################
 
 
 def read_vectors_from_hdf5(
@@ -514,6 +594,8 @@ def read_vectors_from_hdf5(
     quiet: bool = True,  # currently unused
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
+    User-facing function.
+
     Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
     for read-by-read vector processing downstream use cases.
 
@@ -747,6 +829,8 @@ def readwise_binary_modification_arrays(
     cores: int | None = None,  # currently unused
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
+    Primarily designed as a helper function for single-read plotting, but can be used by a user.
+
     Pulls a list of read data out of a file containing processed read vectors, formatted with
     seaborn plotting in mind. Currently we only support .h5 files.
 
@@ -900,6 +984,8 @@ def reads_from_fake(
     file: Path, regions: Path, motifs: list[str]
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict]:
     """
+    Helper function to support testing.
+
     TODO: What does the bed file represent in this method? This one is breaking my brain a bit.
     TODO: Variable names in this method stink.
     TODO: Currently assumes mod calling (thresholding probabilities) was already performed elsewhere
@@ -952,17 +1038,27 @@ def reads_from_fake(
 
 
 def convert_bytes_to_strings(tup):
-    """Convert all bytes elements in a tuple to strings."""
+    """
+    Helper function for single read loading.
+    Convert all bytes elements in a tuple to strings.
+    """
     return tuple(item.decode() if isinstance(item, bytes) else item for item in tup)
     # tuple(convert_bytes(item) for item in tup)
 
 
 def adjust_mod_probs_in_arrays(mod_array, val_array):
+    """
+    Helper function to correct for an idiosyncracy in modkit single-read parsing wherein 0-255
+    "mod quality" values are parsed as floating-point values from 1/512 to 511/512.
+    """
     mod_array[np.flatnonzero(val_array)] += 1 / 512
     return mod_array
 
 
 def adjust_mod_probs_in_tuples(tup, mod_idx, val_idx):
+    """
+    Helper function to apply mod prob adjustments
+    """
     return tuple(
         item if index != mod_idx else adjust_mod_probs_in_arrays(item, tup[val_idx])
         for index, item in enumerate(tup)
@@ -970,6 +1066,9 @@ def adjust_mod_probs_in_tuples(tup, mod_idx, val_idx):
 
 
 def binary_to_np_array(compressed_bytes, dtype, decompressor, binarized, int8tofloat):
+    """
+    Helper function to decompress binary data to boolean or floating point arrays
+    """
     if binarized:
         return np.frombuffer(decompressor(compressed_bytes), dtype=dtype).astype(bool)
     elif int8tofloat:

@@ -107,8 +107,6 @@ def pileup_to_bigwig(
                     load_processed.process_pileup_row(
                         row=row,
                         parsed_motif=parsed_motif,
-                        region_start=0,
-                        region_end=contig_lengths[contig],
                         region_strand=strand,
                         single_strand=(strand != "."),
                     )
