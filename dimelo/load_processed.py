@@ -152,7 +152,7 @@ def pileup_counts_process_chunk(
     valid_base_subregion_counts = 0
     modified_base_subregion_counts = 0
 
-    for row in source_tabix.fetch(chromosome, subregion_start, subregion_end):
+    for row in source_tabix.fetch(chromosome, max(subregion_start, 0), subregion_end):
         (
             keep_basemod,
             _,
@@ -173,6 +173,9 @@ def pileup_counts_process_chunk(
     with lock:
         valid_base_counts[0] += valid_base_subregion_counts
         modified_base_counts[0] += modified_base_subregion_counts
+    # Close the file descriptor/handle to the shared memory
+    existing_valid.close()
+    existing_modified.close()
 
 
 def pileup_counts_from_bedmethyl(
@@ -251,7 +254,7 @@ def pileup_counts_from_bedmethyl(
             concurrent.futures.as_completed(futures),
             total=len(futures),
             disable=quiet,
-            desc=f"Loading genomic chunks, approx. {chunk_size/1000}kb per chunk",
+            desc=f"Loading genomic chunks, up to {chunk_size/1000}kb per chunk",
         ):
             try:
                 future.result()
@@ -265,15 +268,13 @@ def pileup_counts_from_bedmethyl(
     valid_base_count = int.from_bytes(
         shm_valid.buf[:4], byteorder="little", signed=True
     )
+    # Close and unlink shared memory - not fully handled by garbage collection otherwise
+    shm_modified.close()
+    shm_modified.unlink()
+    shm_valid.close()
+    shm_valid.unlink()
 
     return modified_base_count, valid_base_count
-
-    # We need to convert these shared memory buffers to ints that are no longer tied to the buffer,
-    # so they can be passed up without any seg fault type errors
-    modified_base_counts = np.ndarray((1,), dtype=np.int32, buffer=shm_modified.buf)
-    valid_base_counts = np.ndarray((1,), dtype=np.int32, buffer=shm_valid.buf)
-
-    return int(np.copy(modified_base_counts[0])), int(np.copy(valid_base_counts[0]))
 
 
 def counts_from_fake(*args, **kwargs) -> tuple[int, int]:
@@ -330,7 +331,7 @@ def pileup_vectors_process_chunk(
     valid_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
     modified_base_subregion = np.zeros(subregion_end - subregion_start, dtype=int)
 
-    for row in source_tabix.fetch(chromosome, subregion_start, subregion_end):
+    for row in source_tabix.fetch(chromosome, max(subregion_start, 0), subregion_end):
         (
             keep_basemod,
             genomic_coord,
@@ -363,6 +364,9 @@ def pileup_vectors_process_chunk(
         modified_base_counts[
             subregion_offset : subregion_offset + abs(subregion_end - subregion_start)
         ] += modified_base_subregion
+    # Close the file descriptor/handle to the shared memory
+    existing_modified.close()
+    existing_valid.close()
 
 
 def pileup_vectors_from_bedmethyl(
@@ -458,7 +462,7 @@ def pileup_vectors_from_bedmethyl(
             concurrent.futures.as_completed(futures),
             total=len(futures),
             disable=quiet,
-            desc=f"Loading genomic chunks, approx. {chunk_size/1000}kb per chunk",
+            desc=f"Loading genomic chunks, up to {chunk_size/1000}kb per chunk",
         ):
             try:
                 future.result()
@@ -468,12 +472,19 @@ def pileup_vectors_from_bedmethyl(
     # We need to convert these shared memory buffers to numpy arrays which
     # we then copy, so that they no longer reference the shared memory which
     # will soon be de-allocated
-    modified_base_counts = np.ndarray(
-        (region_len,), dtype=np.int32, buffer=shm_modified.buf
+    modified_base_counts = np.copy(
+        np.ndarray((region_len,), dtype=np.int32, buffer=shm_modified.buf)
     )
-    valid_base_counts = np.ndarray((region_len,), dtype=np.int32, buffer=shm_valid.buf)
+    valid_base_counts = np.copy(
+        np.ndarray((region_len,), dtype=np.int32, buffer=shm_valid.buf)
+    )
+    # Close and unlink shared memory - not fully handled by garbage collection otherwise
+    shm_modified.close()
+    shm_modified.unlink()
+    shm_valid.close()
+    shm_valid.unlink()
 
-    return np.copy(modified_base_counts), np.copy(valid_base_counts)
+    return modified_base_counts, valid_base_counts
 
 
 def vector_from_fake(window_size: int, *args, **kwargs) -> np.ndarray:
