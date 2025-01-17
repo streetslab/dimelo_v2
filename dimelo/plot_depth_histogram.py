@@ -14,7 +14,8 @@ def plot_depth_histogram(
     window_size: int,
     single_strand: bool = False,
     average_within_region: bool = False,
-    cores=None,
+    quiet: bool = False,
+    cores: int | None = None,
     **kwargs,
 ) -> Axes:
     """
@@ -40,6 +41,8 @@ def plot_depth_histogram(
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
         average_within_region: if True, each region will only report a single depth value, averaging across all non-zero depths
+        quiet: disables progress bars
+        cores: CPU cores across which to parallelize processing
         kwargs: other keyword parameters passed through to utils.line_plot
 
     Returns:
@@ -55,6 +58,7 @@ def plot_depth_histogram(
         window_size=window_size,
         single_strand=single_strand,
         average_within_region=average_within_region,
+        quiet=quiet,
         cores=cores,
     )
 
@@ -159,7 +163,8 @@ def get_depth_counts(
     window_size: int,
     single_strand: bool = False,
     average_within_region: bool = False,
-    cores=1,
+    quiet: bool = False,
+    cores: int | None = None,
 ) -> list[np.ndarray]:
     """
     Get the depth counts, ready for plotting.
@@ -180,6 +185,8 @@ def get_depth_counts(
             the region of interest, False means we always grab both strands within the regions
         regions_5to3prime: True means negative strand regions get flipped, False means no flipping
         smooth_window: size of the moving window to use for smoothing. If set to None, no smoothing is performed
+        quiet: disables progress bars
+        cores: CPU cores across which to parallelize processing
 
     Returns:
         List of depth histogram traces
@@ -201,6 +208,7 @@ def get_depth_counts(
                     motif=motif,
                     window_size=window_size,
                     single_strand=single_strand,
+                    quiet=quiet,
                     cores=cores,
                 )
                 # places where read depth is zero are assumed to not have the motif present - this may not always be true,

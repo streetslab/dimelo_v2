@@ -38,7 +38,11 @@ def regions_to_list(
         function_handle: the loader function you want to run.
         regions: the region specifier
         window_size: window around centers of regions, defaults to None
-        cores: process count across which to parallelize. Each individual region will only ever get one core.
+        quiet: disables progress bars
+        cores: CPU cores across which to parallelize processing
+        parallelize_within_regions: if True, regions will be run sequentially in parallelized chunks. If False,
+            each individual region's chunks will be run sequentially but there will be parallelization across
+            regions, i.e. each core will be assigned one region at a time by the executor
         **kwargs: all necessary keyword arguments to pass down to the loader
 
     Returns:
@@ -57,7 +61,12 @@ def regions_to_list(
     ]
 
     cores_to_run = utils.cores_to_run(cores)
-
+    # quiet and cores logic below is driven by the following:
+    # If the parallelization is within regions:
+    #    (1) progress bars should happen within regions if at all, because we assume regions are
+    #        large if they make sense to parallelize
+    #    (2) the cores_to_run will be allocated to within-region parallelization, and the top-level
+    #        jobs sequence is run sequentially
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=1 if parallelize_within_regions else cores_to_run
     ) as executor:
@@ -65,8 +74,10 @@ def regions_to_list(
         process_partial = partial(
             process_region,
             function_handle=function_handle,
-            quiet=quiet or not parallelize_within_regions,
-            cores=cores_to_run if parallelize_within_regions else 1,
+            quiet=quiet or not parallelize_within_regions,  #
+            cores=cores_to_run
+            if parallelize_within_regions
+            else 1,  # if parallelization is within region
             **kwargs,
         )
 
@@ -110,7 +121,7 @@ def pileup_counts_from_bedmethyl(
     regions: str | Path | list[str | Path],
     window_size: int | None = None,
     single_strand: bool = False,
-    quiet: bool = True,
+    quiet: bool = False,
     cores: int | None = None,
     chunk_size: int = 1_000_000,
 ) -> tuple[int, int]:
@@ -138,7 +149,7 @@ def pileup_counts_from_bedmethyl(
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
         quiet: disables progress bars
-        cores: cores across which to parallelize processes
+        cores: CPU cores across which to parallelize processing
         chunk_size: size of genomic subregions to assign out to each process
 
     Returns:
@@ -212,7 +223,7 @@ def pileup_vectors_from_bedmethyl(
     window_size: int | None = None,
     single_strand: bool = False,
     regions_5to3prime: bool = False,
-    quiet: bool = True,
+    quiet: bool = False,
     cores: int | None = None,
     chunk_size: int = 1_000_000,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -249,7 +260,7 @@ def pileup_vectors_from_bedmethyl(
             the region of interest, False means we always grab both strands within the regions
         regions_5to3prime: True means negative strand regions get flipped, False means no flipping
         quiet: disables progress bars
-        cores: cores across which to parallelize processes
+        cores: CPU cores across which to parallelize processing
         chunk_size: size of genomic subregions to assign out to each process
 
     Returns:
@@ -379,9 +390,10 @@ def pileup_vectors_process_chunk(
         shm_name_valid: the name string for the shared memory location containing the valid counts array
         lock: a manager.Lock object to allow synchronization in accessing shared memory
         single_strand: True if only single-strand mods are desired
+        regions_5to3prime: True means negative strand regions get flipped, False means no flipping
 
     Returns:
-        None. Counts are added in-place to shared memory.
+        None. Counts are added to arrays in-place to shared memory.
     """
     source_tabix = pysam.TabixFile(str(bedmethyl_file))
     existing_valid = shared_memory.SharedMemory(name=shm_name_valid)
@@ -526,7 +538,7 @@ def process_pileup_row(
 ) -> tuple[bool, int, int, int]:
     """
     Helper function designed for pileup_counts_from_bedmethyl via pileup_counts_process_chunk, pileup_vectors_from_bedmethyl
-    via pileup_vectors_process_chunk, and export.pileup_to_bigwig; changed to logic here may impact some or all of
+    via pileup_vectors_process_chunk, and export.pileup_to_bigwig; changes to logic here may impact some or all of
     these.
 
     Process a row from a pileup, determining whether the basemod is relevant and passing back its coordinate,
@@ -538,7 +550,7 @@ def process_pileup_row(
         region_strand: the strand from the query region
         single_strand: True if only mods on the region_strand are to be kept
 
-    Returns: keep_basemod, genomic_coord, modified_in_row, valid_in_row
+    Returns: keep_basemod, genomic_coord, modified_in_row, valid_in_row. Values are provided even if keep_basemod is False.
     """
     tabix_fields = row.split("\t")
     pileup_basemod = tabix_fields[3]
@@ -590,8 +602,8 @@ def read_vectors_from_hdf5(
     single_strand: bool = False,
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     calculate_mod_fractions: bool = True,
+    quiet: bool = True,  # currently unused; change to default False when pbars are implemented
     cores: int | None = None,  # currently unused
-    quiet: bool = True,  # currently unused
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
     User-facing function.
@@ -612,6 +624,8 @@ def read_vectors_from_hdf5(
     between 0.001953 and 0.99805 for bases in valid motifs. (Invalid positions have zeros.)
 
     After this processing, we calculate modification fractions, sort, and return.
+
+    TODO: Implement progress bars and parallelization as with pileup loaders
 
     Args:
         file: Path to an hdf5 (.h5) file containing modification data for single reads,
@@ -635,8 +649,8 @@ def read_vectors_from_hdf5(
         sort_by: Read properties by which to sort, either one string or a list of strings. Options
             include chromosome, region_start, region_end, read_start, read_end, and motif. More to
             be added in future.
-        cores: cores across which to parallelize processes (currently unused)
         quiet: silences progress bars (currently unused)
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         a list of tuples, each tuple containing all datasets corresponding to an individual read that
@@ -826,6 +840,7 @@ def readwise_binary_modification_arrays(
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     thresh: float | None = None,
     relative: bool = True,
+    quiet: bool = True,  # currently unused; change to default False when pbars are implemented
     cores: int | None = None,  # currently unused
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
@@ -841,6 +856,8 @@ def readwise_binary_modification_arrays(
     the read was identified, allowing for nice plotting, but can also be expressed in absolute
     coordinates. If positions are relative, regions_5to3prime can be used to show all regions
     as upstream-to-downstream along their respective strands.
+
+    TODO: Implement progress bars and parallelization as with pileup loaders
 
     Args:
         file: Path to an hdf5 (.h5) file containing modification data for single reads,
@@ -870,6 +887,7 @@ def readwise_binary_modification_arrays(
             in the genomes, centered at the center of the region. If False, absolute coordinates are provided.
             There is not currently a check for all reads being on the same chromosome if relative=False, but
             this could create unexpected behaviour for a the standard visualizations.
+        quiet: silences progress bars (currently unused)
         cores: cores across which to parallelize processes (currently unused)
 
     Returns:
