@@ -34,6 +34,7 @@ test_matrix = {
             "single_strand": False,
             "regions_5to3prime": False,
             "chunk_size": 1_000_000,
+            "cores": 2,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -54,6 +55,7 @@ test_matrix = {
             "single_strand": False,
             "regions_5to3prime": False,
             "chunk_size": 100,
+            "cores": 4,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -74,6 +76,7 @@ test_matrix = {
             "single_strand": True,
             "regions_5to3prime": True,
             "chunk_size": 10_000,
+            "cores": 1,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -94,6 +97,7 @@ test_matrix = {
             "single_strand": True,
             "regions_5to3prime": False,
             "chunk_size": 1000,
+            "cores": 4,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
@@ -114,6 +118,7 @@ test_matrix = {
             "single_strand": False,
             "regions_5to3prime": True,
             "chunk_size": 100,
+            "cores": 3,
         },
         # outputs dict function:values
         {},  # populated in subsequent cells
