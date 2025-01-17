@@ -77,6 +77,13 @@ class TestParseToPlot(DiMeLoParsingTestCase):
     ):
         kwargs_extract = filter_kwargs_for_func(dm.parse_bam.extract, kwargs)
         kwargs_extract["output_directory"] = cls.outDir
+        # extract can behave non-deterministically in terms of read output order
+        # if run on multiple cores. This is not an issue for sorted read loads,
+        # but means the file itself changes even though the meaningful contents don't
+        # given that parallelization here is purely within modkit anyway, the design
+        # choice was made to always single-core for extract testing
+        if "cores" in kwargs_extract:
+            del kwargs_extract["cores"]
         extract_h5, regions_processed = dm.parse_bam.extract(
             **kwargs_extract,
             ref_genome=cls.reference_genome,
