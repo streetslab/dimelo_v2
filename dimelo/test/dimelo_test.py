@@ -270,9 +270,9 @@ class TestParseToPlot(DiMeLoParsingTestCase):
                     assert np.allclose(
                         actual[key], expected[key], atol=1e-5
                     ), f"""{test_case}: Arrays for {key} are not equal
-mismatch at {np.where(value!=actual[key])}
-mismatch values expected {value[np.where(value!=actual[key])]} vs actual {actual[key][np.where(value!=actual[key])]}
-{value[np.where(value!=actual[key])[0]]} vs {actual[key][np.where(value!=actual[key])[0]]}.
+mismatch at {np.where(value != actual[key])}
+mismatch values expected {value[np.where(value != actual[key])]} vs actual {actual[key][np.where(value != actual[key])]}
+{value[np.where(value != actual[key])[0]]} vs {actual[key][np.where(value != actual[key])[0]]}.
                     """
                 elif isinstance(value, (str, int, bool)):
                     assert (
@@ -439,9 +439,9 @@ class TestLoadProcessed:
                     assert np.allclose(
                         actual[key], expected[key], atol=1e-5
                     ), f"""{test_case}: Arrays for {key} are not equal
-mismatch at {np.where(value!=actual[key])}
-mismatch values expected {value[np.where(value!=actual[key])]} vs actual {actual[key][np.where(value!=actual[key])]}
-{value[np.where(value!=actual[key])[0]]} vs {actual[key][np.where(value!=actual[key])[0]]}.
+mismatch at {np.where(value != actual[key])}
+mismatch values expected {value[np.where(value != actual[key])]} vs actual {actual[key][np.where(value != actual[key])]}
+{value[np.where(value != actual[key])[0]]} vs {actual[key][np.where(value != actual[key])[0]]}.
                     """
                 elif isinstance(value, (str, int, bool)):
                     assert (
