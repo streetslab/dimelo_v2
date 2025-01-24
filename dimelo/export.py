@@ -62,7 +62,7 @@ def pileup_to_bigwig(
     bedmethyl_file_path = Path(bedmethyl_file)
     parsed_motif = utils.ParsedMotif(motif)
 
-    # Because we need to set up the bigwig header for we start writing data to it, we need to pre-calculate the length of each contig
+    # Because we need to set up the bigwig header before we start writing data to it, we need to pre-calculate the length of each contig
     # The header essentially needs to contain a list of the contigs/chromosomes to which the data is aligned, and their sizes.
     # There may be a way to adjust this as we write a bigwig file, but my testing with pyBigWig suggests that you must set it upfront
 
