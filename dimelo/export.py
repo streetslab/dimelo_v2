@@ -27,6 +27,7 @@ def pileup_to_bigwig(
     bedmethyl_file: str | Path,
     motif: str,
     bigwig_file: str | Path | None = None,
+    ref_genome: str | Path | None = None,
     strand: str = ".",
     chunk_size: int = 1000,
 ):
@@ -45,7 +46,10 @@ def pileup_to_bigwig(
         bedmethyl_file: Path to the input bedmethyl file
         motif: type of modification to extract data for
         bigwig_file: Path to the output bigwig destination. If unspecified, a pileup.bw file will be created in the bedmethyl file's directory
+        ref_genome: a reference genome to use for constructing the bigwig header, i.e. contig lengths. If None, the bedmethyl file will be used
+            to estimate contig lengths, which can take some time.
         strand: the DNA strand to extra, + or - for forward or reverse and . for both
+        chunk_size: size for bigwig write chunks, in bedmethyl lines
     """
 
     output_file_path = (
@@ -55,37 +59,56 @@ def pileup_to_bigwig(
     )
     os.makedirs(output_file_path.parent, exist_ok=True)
 
-    # Because we need to set up the bigwig header for we start writing data to it, we need to pre-index the length of each contig
+    # Because we need to set up the bigwig header for we start writing data to it, we need to pre-calculate the length of each contig
     tabix = pysam.TabixFile(str(bedmethyl_file))
     contig_lengths_tuples = []
     lines_by_contig = {}
 
     parsed_motif = utils.ParsedMotif(motif)
-
-    for contig in tqdm(
-        tabix.contigs,
-        desc=f"Step 1: Indexing contigs in {Path(bedmethyl_file).name} to set up bigwig header for {Path(output_file_path).name}",
-    ):
-        # count up the number of rows, for progress tracking, and pull out the last row so as to grab the length of the chromosome
-        # note: the tqdm progress bar slows things down by about 33%, which was deemed better at the time of writing this than
-        # 90 seconds without any status updates
-        rows_count, last_row = list(
-            tail(
-                n=1,
-                iterable=enumerate(
-                    tqdm(
-                        tabix.fetch(contig),
-                        mininterval=1.0,
-                        desc=f"Indexing {contig}.",
-                        leave=False,
-                    )
-                ),
-            )
-        )[0]
-        fields = last_row.split("\t")
-        max_coord = int(fields[2])
-        contig_lengths_tuples.append((contig, max_coord))
-        lines_by_contig[contig] = rows_count
+    # If we only have a bedmethyl file, we need to go through it to get contig lengths
+    if ref_genome is None:
+        for contig in tqdm(
+            tabix.contigs,
+            desc=f"Step 1: Indexing contigs in {Path(bedmethyl_file).name} to set up bigwig header for {Path(output_file_path).name}",
+        ):
+            # count up the number of rows, for progress tracking, and pull out the last row so as to grab the length of the chromosome
+            # note: the tqdm progress bar slows things down by about 33%, which was deemed better at the time of writing this than
+            # 90 seconds without any status updates
+            rows_count, last_row = list(
+                tail(
+                    n=1,
+                    iterable=enumerate(
+                        tqdm(
+                            tabix.fetch(contig),
+                            mininterval=1.0,
+                            desc=f"Indexing {contig}.",
+                            leave=False,
+                        )
+                    ),
+                )
+            )[0]
+            fields = last_row.split("\t")
+            max_coord = int(fields[2])
+            contig_lengths_tuples.append((contig, max_coord))
+            lines_by_contig[contig] = rows_count
+    # If we have a fasta file we can just reference that for contig lengths
+    else:
+        # Open the reference genome fasta file using pysam
+        with pysam.FastaFile(ref_genome) as fasta:
+            for contig in tqdm(
+                tabix.contigs,  # if these are in the wrong order, e.g. the order from the fasta, it is an issue for pyBigWig somehow
+                desc=f"Step 1: Indexing contigs in {Path(ref_genome).name} to set up bigwig header for {Path(output_file_path).name}",
+            ):
+                # Get the length of the contig
+                try:
+                    contig_length = fasta.get_reference_length(contig)
+                except Exception as err:
+                    raise ValueError(
+                        f"Error loading {contig} length from {Path(ref_genome).name}. Are you certain that {Path(bedmethyl_file).name} is aligned to this reference?"
+                    ) from err
+                contig_lengths_tuples.append((contig, contig_length))
+                # if we used a fasta to calculate contig lengths we actually don't know the lines per contig
+                lines_by_contig[contig] = None
 
     with pyBigWig.open(str(output_file_path), "w") as bw:
         bw.addHeader(contig_lengths_tuples)
@@ -97,6 +120,7 @@ def pileup_to_bigwig(
             start_list = []
             end_list = []
             values_list = []
+
             for row in tqdm(
                 tabix.fetch(contig),
                 desc=f"Writing {contig}.",
