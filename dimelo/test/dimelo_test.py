@@ -317,12 +317,16 @@ class TestLoadProcessed:
     outputs section of dimelo/test/generate_test_targets.ipynb.
     """
 
-    def test_unit__regions_list_list(
+    def test_unit__regions_to_list(
         self,
         test_case,
         kwargs,
         results,
     ):
+        """
+        This test currently only tests that regions_to_list can run all relevant loaders, and assumes their
+        values are correct based on the subsequent tests that verify values.
+        """
         if results["pileup"][0] is not None:
             # test pileup loading
             kwargs_counts_from_bedmethyl = filter_kwargs_for_func(
@@ -457,7 +461,8 @@ class TestExport(DiMeLoParsingTestCase):
     Tests file export functionality in export module.
 
     This test currently simply checks that we can make the appropriate output files without raising errors.
-    The values stored in the files are not verified.
+    The values stored in the files are not verified. Future work should add test coverage for values, but at
+    the moment there is no loading infrastructure in place for bigwig files making such implementation high-overhead.
     """
 
     def test_unit__pileup_to_bigwig(
