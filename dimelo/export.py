@@ -43,7 +43,7 @@ def pileup_to_bigwig(
     you can specify the regions at parsing time, rather than re-implementing the subset handling logic here.
 
     Args:
-        bedmethyl_file: Path to the input bedmethyl file
+        bedmethyl_file: Path to the input tabix-indexed gzipped bedmethyl file
         motif: type of modification to extract data for
         bigwig_file: Path to the output bigwig destination. If unspecified, a pileup.bw file will be created in the bedmethyl file's directory
         ref_genome: a reference genome to use for constructing the bigwig header, i.e. contig lengths. If None, the bedmethyl file will be used
