@@ -343,6 +343,7 @@ def hist_plot(
         value_names: parallel with value_vectors; names of each overlayed line; set as legend entries
         x_label: name of distributed values; set as x axis label
         y_label: y-axis label
+        integer_values: True if hist bins are only at integer values, meaning bins shouldn't be auto-determined
         kwargs: other keyword parameters passed through to seaborn.histplot
 
     Returns:
@@ -359,19 +360,21 @@ def hist_plot(
 
     # Create DataFrame
     data_table = pd.DataFrame(data_dict)
-    # Set integer bins if values will be only integers
-    bins = (
-        np.arange(data_table[x_label].min() - 0.5, data_table[x_label].max() + 1.5, 1)
-        if integer_values
-        else None
-    )
+    if integer_values:
+        # Warn user that passed bins are being overwritten
+        if "bins" in kwargs:
+            print("Warning: bin settings overwritten by defaults")
+        kwargs["bins"] = np.arange(
+            data_table[x_label].min() - 0.5, data_table[x_label].max() + 1.5, 1
+        )
+
     # plot histogram
     ax = sns.histplot(
         data=data_table,
         x=x_label,
         hue=y_label,
         multiple="dodge",
-        **{**kwargs, **({"bins": bins} if bins is not None else {})},
+        **kwargs,
     )
 
     ax.set_ylabel(y_label)
