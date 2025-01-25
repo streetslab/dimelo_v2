@@ -13,10 +13,19 @@ from tqdm.auto import tqdm
 from . import test_data, utils
 
 
-def process_region(region_tuple, function_handle, **kwargs):
-    chromosome, start_coord, end_coord, strand = region_tuple
-    single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
-    return function_handle(regions=single_region_str, **kwargs)
+def process_region(region_string, function_handle, **kwargs):
+    """
+    process_region simply exists to convert position arguments into keyword arguments to make executor.map work
+
+    Args:
+        region_string: passed down with regions keyword
+        function_handle: function to call with regions and other kwargs
+        **kwargs: all keyword arguments passed to regions_to_list. These must be sufficient for whichever load_processed function
+            if being referenced by function_handle
+    Returns:
+        function_handle return value
+    """
+    return function_handle(regions=region_string, **kwargs)
 
 
 def regions_to_list(
@@ -36,6 +45,9 @@ def regions_to_list(
         window_size: window around centers of regions, defaults to None
         cores: process count across which to parallelize. Each individual region will only ever get one core.
         **kwargs: all necessary keyword arguments to pass down to the loader
+
+    Returns:
+        List(function_handle return objects per region)
     """
     regions_dict = utils.regions_dict_from_input(
         regions,
@@ -43,8 +55,8 @@ def regions_to_list(
     )
 
     # Flatten regions into a list of (chromosome, start, end, strand)
-    region_tuples = [
-        (chromosome, start, end, strand)
+    region_strings = [
+        f"{chromosome}:{start}-{end},{strand}"
         for chromosome, region_list in regions_dict.items()
         for start, end, strand in region_list
     ]
@@ -61,16 +73,18 @@ def regions_to_list(
             # Use executor.map without lambda
             results = list(
                 tqdm(
-                    executor.map(process_partial, region_tuples),
-                    total=len(region_tuples),
+                    executor.map(process_partial, region_strings),
+                    total=len(region_strings),
                     desc=f"Processing regions in parallel across {cores_to_run}",
                 )
             )
     else:
         # Single-threaded fallback
         results = [
-            process_region(region, function_handle, cores=1, **kwargs)
-            for region in tqdm(region_tuples, desc="Processing regions")
+            process_region(
+                region_string=region, function_handle=function_handle, cores=1, **kwargs
+            )
+            for region in tqdm(region_strings, desc="Processing regions")
         ]
 
     return results
