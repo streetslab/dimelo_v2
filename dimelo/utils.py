@@ -84,7 +84,7 @@ def adjust_threshold(
         if thresh > 1:
             if not quiet:
                 print(
-                    f"Modification threshold of {thresh} assumed to be for range 0-255. {thresh}/255={thresh/255} will be sent to modkit."
+                    f"Modification threshold of {thresh} assumed to be for range 0-255. {thresh}/255={thresh / 255} will be sent to modkit."
                 )
             thresh_scaled = thresh / 255
         else:

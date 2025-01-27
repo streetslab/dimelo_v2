@@ -36,7 +36,8 @@ def generate_extract(test_matrix, case_subset):
     for case in case_subset if case_subset is not None else test_matrix.keys():
         kwargs, results = test_matrix[case]
         kwargs_extract = filter_kwargs_for_func(parse_bam.extract, kwargs)
-        # if kwargs['regions']==region: # for now, we only want to extract with the single region due to output file size
+        if "cores" in kwargs_extract:
+            del kwargs_extract["cores"]
         extract_file, extract_regions = parse_bam.extract(
             **kwargs_extract,
             ref_genome=ref_genome_file,
