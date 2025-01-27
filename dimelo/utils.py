@@ -295,7 +295,7 @@ def line_plot(
     TODO: Right now, this always generates a legend with the title "variable". I could add a parameter to specify this (by passing the var_name argument to pd.DataFrame.melt), but then that percolates upwards to other methods. How to do this cleanly?
 
     Args:
-        indep_vector: parallel with each entry in vectors; independent variable values shared across each overlayed line
+        indep_vector: parallel with each entry in dep_vectors; independent variable values shared across each overlayed line
         indep_name: name of independent variable; set as x axis label
         dep_vectors: outer list parallel with dep_names; each inner vector parallel with indep_vector; dependent variable values for each overlayed line
         dep_names: parallel with dep_vectors; names of each overlayed line; set as legend entries
@@ -339,8 +339,8 @@ def hist_plot(
     Takes arbitrarily many counts vectors and plots on same histogram.
 
     Args:
-        value_vectors: parallel with each entry in vectors
-        value_names: parallel with value_vectors; names of each overlayed line; set as legend entries
+        value_vectors: parallel with value_names; vectors of values to plot histograms of; each vector will be a separate overlayed histogram
+        value_names: parallel with value_vectors; names of each overlayed histogram; set as legend entries
         x_label: name of distributed values; set as x axis label
         y_label: y-axis label
         integer_values: True if hist bins are only at integer values, meaning bins shouldn't be auto-determined
