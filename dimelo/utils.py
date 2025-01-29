@@ -253,6 +253,13 @@ def bedmethyl_to_bigwig(input_bedmethyl: str | Path, output_bigwig: str | Path):
     return 0
 
 
+def sanitize_path_args(*args) -> tuple:
+    """
+    Coerce all given arguments to Path objects, leaving Nones as Nones.
+    """
+    return tuple(Path(f) if f is not None else f for f in args)
+
+
 def check_len_equal(*args: list) -> bool:
     """
     Checks whether all provided lists are the same length.
