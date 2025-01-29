@@ -1,21 +1,102 @@
 import gzip
 import random
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pysam
+from tqdm.auto import tqdm
 
 from . import test_data, utils
+
+
+def process_region(region_string, function_handle, **kwargs):
+    """
+    process_region simply exists to convert position arguments into keyword arguments to make executor.map work
+
+    Args:
+        region_string: passed down with regions keyword
+        function_handle: function to call with regions and other kwargs
+        **kwargs: all keyword arguments passed to regions_to_list. These must be sufficient for whichever load_processed function
+            if being referenced by function_handle
+    Returns:
+        function_handle return value
+    """
+    return function_handle(regions=region_string, **kwargs)
+
+
+def regions_to_list(
+    function_handle,
+    regions,
+    window_size: int | None = None,
+    cores: int | None = None,
+    **kwargs,
+):
+    """
+    Run any standard load_processed pileup or extract loader loading each region from the region
+    specifier into a new element of a list.
+
+    Args:
+        function_handle: the loader function you want to run.
+        regions: the region specifier
+        window_size: window around centers of regions, defaults to None
+        cores: process count across which to parallelize. Each individual region will only ever get one core.
+        **kwargs: all necessary keyword arguments to pass down to the loader
+
+    Returns:
+        List(function_handle return objects per region)
+    """
+    regions_dict = utils.regions_dict_from_input(
+        regions,
+        window_size,
+    )
+
+    # Flatten regions into a list of (chromosome, start, end, strand)
+    region_strings = [
+        f"{chromosome}:{start}-{end},{strand}"
+        for chromosome, region_list in regions_dict.items()
+        for start, end, strand in region_list
+    ]
+
+    cores_to_run = utils.cores_to_run(cores)
+
+    if cores_to_run > 1:
+        with ProcessPoolExecutor(max_workers=cores_to_run) as executor:
+            # Use functools.partial to pre-fill arguments
+            process_partial = partial(
+                process_region, function_handle=function_handle, cores=1, **kwargs
+            )
+
+            # Use executor.map without lambda
+            results = list(
+                tqdm(
+                    executor.map(process_partial, region_strings),
+                    total=len(region_strings),
+                    desc=f"Processing regions in parallel across {cores_to_run}",
+                )
+            )
+    else:
+        # Single-threaded fallback
+        results = [
+            process_region(
+                region_string=region, function_handle=function_handle, cores=1, **kwargs
+            )
+            for region in tqdm(region_strings, desc="Processing regions")
+        ]
+
+    return results
 
 
 def pileup_counts_from_bedmethyl(
     bedmethyl_file: str | Path,
     motif: str,
     regions: str | Path | list[str | Path] | None = None,
-    # window_size: int | None = None,
+    window_size: int | None = None,
     single_strand: bool = False,
+    cores: int | None = None,  # currently unused
 ) -> tuple[int, int]:
     """
     Extract number of modified bases and total number of bases from the given bedmethyl file.
@@ -38,6 +119,7 @@ def pileup_counts_from_bedmethyl(
         window_size: (currently disabled) window around center of region, +-window_size
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         tuple containing counts of (modified_bases, total_bases)
@@ -54,7 +136,7 @@ def pileup_counts_from_bedmethyl(
         # Get counts from the specified regions
         regions_dict = utils.regions_dict_from_input(
             regions,
-            # window_size
+            window_size,
         )
         for chromosome, region_list in regions_dict.items():
             for start_coord, end_coord, strand in region_list:
@@ -62,6 +144,7 @@ def pileup_counts_from_bedmethyl(
                 if chromosome in source_tabix.contigs:
                     for row in source_tabix.fetch(chromosome, start_coord, end_coord):
                         # TODO Consider using csv module
+                        # TODO: probably this whole block should share logic with vectors_from_bedmethyl AND from export module functions
                         tabix_fields = row.split("\t")
                         pileup_basemod = tabix_fields[3]
                         pileup_strand = tabix_fields[5]
@@ -140,6 +223,7 @@ def pileup_vectors_from_bedmethyl(
     window_size: int | None = None,
     single_strand: bool = False,
     regions_5to3prime: bool = False,
+    cores: int | None = None,  # currently unused
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Extract per-position pileup counts at valid motifs across one or more superimposed regions.
@@ -171,6 +255,7 @@ def pileup_vectors_from_bedmethyl(
         single_strand: True means we only grab counts from reads from the same strand as
             the region of interest, False means we always grab both strands within the regions
         regions_5to3prime: True means negative strand regions get flipped, False means no flipping
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         tuple containing (modified_base_counts, valid_base_counts)
@@ -198,6 +283,7 @@ def pileup_vectors_from_bedmethyl(
                 for row in source_tabix.fetch(chromosome, start_coord, end_coord):
                     # TODO: can we consolidate this with pileup_counts_from_bedmethyl?
                     # Just the checks?
+                    # TODO: probably this whole block should share logic with counts_from_bedmethyl AND from export functions
                     tabix_fields = row.split("\t")
                     pileup_basemod = tabix_fields[3]
                     pileup_strand = tabix_fields[5]
@@ -270,6 +356,7 @@ def read_vectors_from_hdf5(
     single_strand: bool = False,
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     calculate_mod_fractions: bool = True,
+    cores: int | None = None,  # currently unused
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
     Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
@@ -311,6 +398,7 @@ def read_vectors_from_hdf5(
         sort_by: Read properties by which to sort, either one string or a list of strings. Options
             include chromosome, region_start, region_end, read_start, read_end, and motif. More to
             be added in future.
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         a list of tuples, each tuple containing all datasets corresponding to an individual read that
@@ -500,6 +588,7 @@ def readwise_binary_modification_arrays(
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     thresh: float | None = None,
     relative: bool = True,
+    cores: int | None = None,  # currently unused
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
     Pulls a list of read data out of a file containing processed read vectors, formatted with
@@ -541,6 +630,7 @@ def readwise_binary_modification_arrays(
             in the genomes, centered at the center of the region. If False, absolute coordinates are provided.
             There is not currently a check for all reads being on the same chromosome if relative=False, but
             this could create unexpected behaviour for a the standard visualizations.
+        cores: cores across which to parallelize processes (currently unused)
 
     Returns:
         Returns a tuple of three arrays, of length (N_READS * len(mod_names)), and a dict of regions.

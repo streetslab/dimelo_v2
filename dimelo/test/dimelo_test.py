@@ -5,6 +5,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import plotly
 import pytest
 from matplotlib.axes import Axes
 
@@ -52,9 +53,10 @@ class TestParseToPlot(DiMeLoParsingTestCase):
         if pileup_target is not None and regions_target is not None:
             # This is necessary because the gzipped files are different on mac vs linux, but the contents should be identical (and are, so far)
             # Not sure why the compression ratio is better on Linux when both are using pysam.tabix_compress with pysam 0.22.0 and zlib 1.2.13 but whatcha gonna do
-            with gzip.open(pileup_bed, "rt") as f1, gzip.open(
-                pileup_target, "rt"
-            ) as f2:
+            with (
+                gzip.open(pileup_bed, "rt") as f1,
+                gzip.open(pileup_target, "rt") as f2,
+            ):
                 # Read and compare file contents
                 file1_contents = f1.read()
                 file2_contents = f2.read()
@@ -315,6 +317,47 @@ class TestLoadProcessed:
     outputs section of dimelo/test/generate_test_targets.ipynb.
     """
 
+    def test_unit__regions_to_list(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        """
+        This test currently only tests that regions_to_list can run all relevant loaders, and assumes their
+        values are correct based on the subsequent tests that verify values.
+        """
+        if results["pileup"][0] is not None:
+            # test pileup loading
+            kwargs_counts_from_bedmethyl = filter_kwargs_for_func(
+                dm.load_processed.pileup_counts_from_bedmethyl, kwargs
+            )
+            kwargs_vectors_from_bedmethyl = filter_kwargs_for_func(
+                dm.load_processed.pileup_vectors_from_bedmethyl, kwargs
+            )
+            for motif in kwargs["motifs"]:
+                dm.load_processed.regions_to_list(
+                    function_handle=dm.load_processed.pileup_counts_from_bedmethyl,
+                    bedmethyl_file=results["pileup"][0],
+                    motif=motif,
+                    **kwargs_counts_from_bedmethyl,
+                )
+                dm.load_processed.regions_to_list(
+                    function_handle=dm.load_processed.pileup_vectors_from_bedmethyl,
+                    bedmethyl_file=results["pileup"][0],
+                    motif=motif,
+                    **kwargs_vectors_from_bedmethyl,
+                )
+        if results["extract"][0] is not None:
+            kwargs_read_vectors_from_hdf5 = filter_kwargs_for_func(
+                dm.load_processed.read_vectors_from_hdf5, kwargs
+            )
+            dm.load_processed.regions_to_list(
+                function_handle=dm.load_processed.read_vectors_from_hdf5,
+                file=results["extract"][0],
+                **kwargs_read_vectors_from_hdf5,
+            )
+
     def test_unit__pileup_counts_from_bedmethyl(
         self,
         test_case,
@@ -407,6 +450,37 @@ mismatch values expected {value[np.where(value!=actual[key])]} vs actual {actual
                     ), f"{test_case}: Values for {key} are not equal: expected {value} but got {actual[key]}."
         else:
             print("{test_case} skipped for read_vectors_from_hdf5.")
+
+
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestExport(DiMeLoParsingTestCase):
+    """
+    Tests file export functionality in export module.
+
+    This test currently simply checks that we can make the appropriate output files without raising errors.
+    The values stored in the files are not verified. Future work should add test coverage for values, but at
+    the moment there is no loading infrastructure in place for bigwig files making such implementation high-overhead.
+    """
+
+    def test_unit__pileup_to_bigwig(
+        cls,
+        test_case,
+        kwargs,
+        results,
+    ):
+        kwargs_bigwig = filter_kwargs_for_func(dm.export.pileup_to_bigwig, kwargs)
+        kwargs_bigwig["bedmethyl_file"] = results["pileup"][0]
+        kwargs_bigwig["bigwig_file"] = (
+            cls.outDir / kwargs["output_name"] / "pileup.fractions.bigwig"
+        )
+        for motif in kwargs["motifs"]:
+            dm.export.pileup_to_bigwig(
+                **kwargs_bigwig,
+                motif=motif,
+            )
 
 
 class TestPlotEnrichmentSynthetic:
@@ -719,6 +793,330 @@ class TestPlotEnrichmentProfile:
             print(f"{test_case} skipped for plot_enrichment_profile.by_dataset.")
 
 
+class TestPlotDepthProfileSynthetic:
+    """
+    Tests plotting functionality in plot_depth_profile.
+
+    This test simply checks that we can make plots from synthetic data without raising errors.
+    Appearance of plots is not verified.
+    """
+
+    def test_unit__plot_depth_profile_plot_depth_profile_synthetic(self):
+        ax = dm.plot_depth_profile.plot_depth_profile(
+            mod_file_names=["test1.fake", "test2.fake"],
+            regions_list=["test1.bed", "test2.bed"],
+            motifs=["A", "C"],
+            window_size=500,
+            sample_names=["sample1", "sample2"],
+            smooth_window=50,
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_profile_by_modification_synthetic(self):
+        ax = dm.plot_depth_profile.by_modification(
+            mod_file_name="test.fake",
+            regions="test.bed",
+            window_size=500,
+            motifs=["A", "C"],
+            smooth_window=50,
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_profile_by_region_synthetic(self):
+        ax = dm.plot_depth_profile.by_regions(
+            mod_file_name="test.fake",
+            regions_list=["test1.bed", "test2.bed"],
+            motif="A",
+            window_size=500,
+            sample_names=["on target", "off target"],
+            smooth_window=50,
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_profile_by_dataset_synthetic(self):
+        ax = dm.plot_depth_profile.by_dataset(
+            mod_file_names=["test1.fake", "test2.fake"],
+            regions="test.bed",
+            motif="A",
+            window_size=500,
+            sample_names=["experiment 1", "experiment 2"],
+            smooth_window=50,
+        )
+        assert isinstance(ax, Axes)
+
+
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestPlotDepthProfile:
+    def test_unit__plot_depth_profile_plot_depth_profile(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_profile_plot_depth_profile = filter_kwargs_for_func(
+                dm.plot_depth_profile.plot_depth_profile,
+                kwargs,
+                extra_args=["window_size", "smooth_window"],
+            )
+            for motif in kwargs["motifs"]:
+                regions_list = (
+                    kwargs["regions"]
+                    if isinstance(kwargs["regions"], list)
+                    else [kwargs["regions"]]
+                )
+                kwargs_plot_depth_profile_plot_depth_profile["motifs"] = [
+                    motif for _ in regions_list
+                ]
+                ax = dm.plot_depth_profile.plot_depth_profile(
+                    mod_file_names=[results["pileup"][0] for _ in regions_list],
+                    regions_list=regions_list,
+                    sample_names=["label" for _ in regions_list],
+                    **kwargs_plot_depth_profile_plot_depth_profile,
+                )
+                assert isinstance(
+                    ax, Axes
+                ), f"{test_case}: plotting failed for {motif}."
+        else:
+            print(f"{test_case} skipped for plot_depth_profile.plot_depth_profile.")
+
+    def test_unit__plot_depth_profile_by_regions(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_profile_by_regions = filter_kwargs_for_func(
+                dm.plot_depth_profile.by_regions,
+                kwargs,
+                extra_args=["window_size", "smooth_window"],
+            )
+            for motif in kwargs["motifs"]:
+                regions_list = (
+                    kwargs["regions"]
+                    if isinstance(kwargs["regions"], list)
+                    else [kwargs["regions"]]
+                )
+                ax = dm.plot_depth_profile.by_regions(
+                    mod_file_name=results["pileup"][0],
+                    regions_list=regions_list,
+                    motif=motif,
+                    sample_names=["label" for _ in regions_list],
+                    **kwargs_plot_depth_profile_by_regions,
+                )
+                assert isinstance(
+                    ax, Axes
+                ), f"{test_case}: plotting failed for {motif}."
+        else:
+            print(f"{test_case} skipped for plot_depth_profile.by_regions.")
+
+    def test_unit__plot_depth_profile_by_modification(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_profile_by_modification = filter_kwargs_for_func(
+                dm.plot_depth_profile.by_modification,
+                kwargs,
+                extra_args=["window_size", "smooth_window"],
+            )
+            ax = dm.plot_depth_profile.by_modification(
+                mod_file_name=results["pileup"][0],
+                **kwargs_plot_depth_profile_by_modification,
+            )
+            assert isinstance(ax, Axes), f"{test_case}: plotting failed."
+        else:
+            print(f"{test_case} skipped for plot_depth_profile.by_modification.")
+
+    def test_unit__plot_depth_by_dataset(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_profile_by_dataset = filter_kwargs_for_func(
+                dm.plot_depth_profile.by_dataset,
+                kwargs,
+                extra_args=["window_size", "smooth_window"],
+            )
+            for motif in kwargs["motifs"]:
+                ax = dm.plot_depth_profile.by_dataset(
+                    mod_file_names=[results["pileup"][0]],
+                    motif=motif,
+                    **kwargs_plot_depth_profile_by_dataset,
+                )
+                assert isinstance(ax, Axes), f"{test_case}: plotting failed."
+        else:
+            print(f"{test_case} skipped for plot_depth_profile.by_dataset.")
+
+
+class TestPlotDepthHistogramSynthetic:
+    """
+    Tests plotting functionality in plot_depth_histogram.
+
+    This test simply checks that we can make plots from synthetic data without raising errors.
+    Appearance of plots is not verified.
+    """
+
+    def test_unit__plot_depth_histogram_plot_depth_histogram_synthetic(self):
+        ax = dm.plot_depth_histogram.plot_depth_histogram(
+            mod_file_names=["test1.fake", "test2.fake"],
+            regions_list=["test1.bed", "test2.bed"],
+            motifs=["A", "C"],
+            window_size=500,
+            sample_names=["sample1", "sample2"],
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_histogram_by_modification_synthetic(self):
+        ax = dm.plot_depth_histogram.by_modification(
+            mod_file_name="test.fake",
+            regions="test.bed",
+            window_size=500,
+            motifs=["A", "C"],
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_histogram_by_region_synthetic(self):
+        ax = dm.plot_depth_histogram.by_regions(
+            mod_file_name="test.fake",
+            regions_list=["test1.bed", "test2.bed"],
+            motif="A",
+            window_size=500,
+            sample_names=["on target", "off target"],
+        )
+        assert isinstance(ax, Axes)
+
+    def test_unit__plot_depth_histogram_by_dataset_synthetic(self):
+        ax = dm.plot_depth_histogram.by_dataset(
+            mod_file_names=["test1.fake", "test2.fake"],
+            regions="test.bed",
+            motif="A",
+            window_size=500,
+            sample_names=["experiment 1", "experiment 2"],
+        )
+        assert isinstance(ax, Axes)
+
+
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestPlotDepthHistogram:
+    def test_unit__plot_depth_histogram_plot_depth_histogram(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_plot_depth_histogram = filter_kwargs_for_func(
+                dm.plot_depth_histogram.plot_depth_histogram,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            for motif in kwargs["motifs"]:
+                regions_list = (
+                    kwargs["regions"]
+                    if isinstance(kwargs["regions"], list)
+                    else [kwargs["regions"]]
+                )
+                kwargs_plot_depth_histogram_plot_depth_histogram["motifs"] = [
+                    motif for _ in regions_list
+                ]
+                ax = dm.plot_depth_histogram.plot_depth_histogram(
+                    mod_file_names=[results["pileup"][0] for _ in regions_list],
+                    regions_list=regions_list,
+                    sample_names=["label" for _ in regions_list],
+                    **kwargs_plot_depth_histogram_plot_depth_histogram,
+                )
+                assert isinstance(
+                    ax, Axes
+                ), f"{test_case}: plotting failed for {motif}."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.plot_depth_histogram.")
+
+    def test_unit__plot_depth_histogram_by_regions(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_by_regions = filter_kwargs_for_func(
+                dm.plot_depth_histogram.by_regions,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            for motif in kwargs["motifs"]:
+                regions_list = (
+                    kwargs["regions"]
+                    if isinstance(kwargs["regions"], list)
+                    else [kwargs["regions"]]
+                )
+                ax = dm.plot_depth_histogram.by_regions(
+                    mod_file_name=results["pileup"][0],
+                    regions_list=regions_list,
+                    motif=motif,
+                    sample_names=["label" for _ in regions_list],
+                    **kwargs_plot_depth_histogram_by_regions,
+                )
+                assert isinstance(
+                    ax, Axes
+                ), f"{test_case}: plotting failed for {motif}."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.by_regions.")
+
+    def test_unit__plot_depth_histogram_by_modification(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_by_modification = filter_kwargs_for_func(
+                dm.plot_depth_histogram.by_modification,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            ax = dm.plot_depth_histogram.by_modification(
+                mod_file_name=results["pileup"][0],
+                **kwargs_plot_depth_histogram_by_modification,
+            )
+            assert isinstance(ax, Axes), f"{test_case}: plotting failed."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.by_modification.")
+
+    def test_unit__plot_depth_by_dataset(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["pileup"][0] is not None:
+            kwargs_plot_depth_histogram_by_dataset = filter_kwargs_for_func(
+                dm.plot_depth_histogram.by_dataset,
+                kwargs,
+                extra_args=["window_size"],
+            )
+            for motif in kwargs["motifs"]:
+                ax = dm.plot_depth_histogram.by_dataset(
+                    mod_file_names=[results["pileup"][0]],
+                    motif=motif,
+                    **kwargs_plot_depth_histogram_by_dataset,
+                )
+                assert isinstance(ax, Axes), f"{test_case}: plotting failed."
+        else:
+            print(f"{test_case} skipped for plot_depth_histogram.by_dataset.")
+
+
 class TestPlotReadsSynthetic:
     """
     Tests plotting functionality in plot_reads.
@@ -772,4 +1170,65 @@ class TestPlotReads:
                 )
                 assert isinstance(ax, Axes), f"{test_case}: plotting failed."
         else:
-            print(f"{test_case} skipped for test_plot_reads_plot_reads.")
+            print(f"{test_case} skipped for test_unit__plot_reads_plot_reads.")
+
+
+@pytest.mark.parametrize(
+    "test_case,kwargs,results",
+    [(case, inputs, outputs) for case, (inputs, outputs) in test_matrix.items()],
+)
+class TestPlotReadBrowser:
+    def test_unit__plot_read_browser(
+        self,
+        test_case,
+        kwargs,
+        results,
+    ):
+        if results["extract"][0] is not None:
+            kwargs_plot_read_browser = filter_kwargs_for_func(
+                dm.plot_read_browser.plot_read_browser, kwargs
+            )
+            if (
+                kwargs["thresh"] is None
+                and kwargs["thresh"] is None
+                and not isinstance(kwargs["regions"], list)
+                and Path(kwargs["regions"]).suffix != ".bed"
+            ):
+                fig = dm.plot_read_browser.plot_read_browser(
+                    mod_file_name=results["extract"][0],
+                    region=kwargs["regions"],
+                    **kwargs_plot_read_browser,
+                )
+                assert isinstance(
+                    fig, plotly.graph_objs.Figure
+                ), f"{test_case}: plotting failed."
+            else:
+                with pytest.raises(ValueError) as excinfo:
+                    fig = dm.plot_read_browser.plot_read_browser(
+                        mod_file_name=results["extract"][0],
+                        region=kwargs["regions"],
+                        **kwargs_plot_read_browser,
+                    )
+                if (
+                    isinstance(kwargs["regions"], list)
+                    or Path(kwargs["regions"]).suffix == ".bed"
+                ) and kwargs["thresh"] is None:
+                    assert (
+                        "Invalid region" in str(excinfo.value)
+                    ), f"{test_case}: unexpected exception for no-threshold bad-region case {excinfo.value}"
+                elif (
+                    kwargs["thresh"] is not None
+                    and not isinstance(kwargs["regions"], list)
+                    and Path(kwargs["regions"]).suffix != ".bed"
+                ):
+                    assert (
+                        "A threshold has been applied" in str(excinfo.value)
+                    ), f"{test_case}: unexpected exception thresholded valid-region case {excinfo.value}"
+                else:
+                    assert (
+                        "A threshold has been applied" in str(excinfo.value)
+                        or "Invalid region" in str(excinfo.value)
+                    ), f"{test_case}: unexpected exception thresholded bad-region case {excinfo.value}"
+
+        else:
+            print(f"{test_case} skipped for test_unit__plot_read_browser")

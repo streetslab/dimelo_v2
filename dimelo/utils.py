@@ -1,3 +1,4 @@
+import multiprocessing
 from collections import defaultdict
 from pathlib import Path
 
@@ -32,6 +33,14 @@ DEFAULT_COLORS.update(
 # Default colorscales for plotly; based off of DEFAULT_COLORS
 DEFAULT_COLORSCALES = defaultdict(lambda: ["white", "grey"])
 DEFAULT_COLORSCALES.update([(k, ["white", v]) for k, v in DEFAULT_COLORS.items()])
+
+
+def cores_to_run(cores):
+    cores_avail = multiprocessing.cpu_count()
+    if cores is None or cores > cores_avail:
+        return cores_avail
+    else:
+        return cores
 
 
 class ParsedMotif:
@@ -205,17 +214,26 @@ def parse_region_string(
     Returns:
         chromosome, (start_pos, end_pos, strand)
     """
-    # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
-    region_coords = region.split(",")
-    # The default strand is ., which is neither strand
-    strand = region_coords[1] if len(region_coords) > 1 else "."
-    chrom, coords = region_coords[0].split(":")
-    start, end = map(int, coords.split("-"))
-    if window_size is None:
-        return chrom, (start, end, strand)
-    else:
-        center_coord = (start + end) // 2
-        return chrom, (center_coord - window_size, center_coord + window_size, strand)
+    try:
+        # region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)
+        region_coords = region.split(",")
+        # The default strand is ., which is neither strand
+        strand = region_coords[1] if len(region_coords) > 1 else "."
+        chrom, coords = region_coords[0].split(":")
+        start, end = map(int, coords.split("-"))
+        if window_size is None:
+            return chrom, (start, end, strand)
+        else:
+            center_coord = (start + end) // 2
+            return chrom, (
+                center_coord - window_size,
+                center_coord + window_size,
+                strand,
+            )
+    except (ValueError, AttributeError) as err:
+        raise ValueError(
+            f"Invalid region string {region}. Region strings can be either chrX:XXX-XXX or chrX:XXX-XXX,strand (+/-/.)."
+        ) from err
 
 
 def bed_from_regions_dict(
@@ -233,6 +251,13 @@ def bed_from_regions_dict(
 
 def bedmethyl_to_bigwig(input_bedmethyl: str | Path, output_bigwig: str | Path):
     return 0
+
+
+def sanitize_path_args(*args) -> tuple:
+    """
+    Coerce all given arguments to Path objects, leaving Nones as Nones.
+    """
+    return tuple(Path(f) if f is not None else f for f in args)
 
 
 def check_len_equal(*args: list) -> bool:
@@ -277,7 +302,7 @@ def line_plot(
     TODO: Right now, this always generates a legend with the title "variable". I could add a parameter to specify this (by passing the var_name argument to pd.DataFrame.melt), but then that percolates upwards to other methods. How to do this cleanly?
 
     Args:
-        indep_vector: parallel with each entry in vectors; independent variable values shared across each overlayed line
+        indep_vector: parallel with each entry in dep_vectors; independent variable values shared across each overlayed line
         indep_name: name of independent variable; set as x axis label
         dep_vectors: outer list parallel with dep_names; each inner vector parallel with indep_vector; dependent variable values for each overlayed line
         dep_names: parallel with dep_vectors; names of each overlayed line; set as legend entries
@@ -305,6 +330,63 @@ def line_plot(
     return sns.lineplot(
         data=data_table, x=indep_name, y=y_label, hue="variable", **kwargs
     )
+
+
+def hist_plot(
+    value_vectors: list[np.ndarray],
+    value_names: list[str],
+    x_label: str,
+    y_label: str,
+    integer_values: bool = False,
+    **kwargs,
+) -> Axes:
+    """
+    Utility for producing overlayed histogram plots for data vectors containing values with some distribution.
+
+    Takes arbitrarily many counts vectors and plots on same histogram.
+
+    Args:
+        value_vectors: parallel with value_names; vectors of values to plot histograms of; each vector will be a separate overlayed histogram
+        value_names: parallel with value_vectors; names of each overlayed histogram; set as legend entries
+        x_label: name of distributed values; set as x axis label
+        y_label: y-axis label
+        integer_values: True if hist bins are only at integer values, meaning bins shouldn't be auto-determined
+        kwargs: other keyword parameters passed through to seaborn.histplot
+
+    Returns:
+        Axes object containing the plot
+
+    Raises:
+        ValueError: raised if any vectors are of unequal length
+    """
+    # Flatten the vectors and assign corresponding labels
+    data_dict = {
+        x_label: np.concatenate(value_vectors),
+        y_label: np.repeat(value_names, [len(vec) for vec in value_vectors]),
+    }
+
+    # Create DataFrame
+    data_table = pd.DataFrame(data_dict)
+    if integer_values:
+        # Warn user that passed bins are being overwritten
+        if "bins" in kwargs:
+            print("Warning: bin settings overwritten by defaults")
+        kwargs["bins"] = np.arange(
+            data_table[x_label].min() - 0.5, data_table[x_label].max() + 1.5, 1
+        )
+
+    # plot histogram
+    ax = sns.histplot(
+        data=data_table,
+        x=x_label,
+        hue=y_label,
+        multiple="dodge",
+        **kwargs,
+    )
+
+    ax.set_ylabel(y_label)
+
+    return ax
 
 
 def smooth_rolling_mean(

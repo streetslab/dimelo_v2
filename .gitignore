@@ -58,3 +58,7 @@ docs/_build/
 
 # Ignore tutorial output files
 dimelo/test/output
+
+# Checkpoint files
+.ipynb_checkpoints/
+
