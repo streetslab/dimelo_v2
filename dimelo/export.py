@@ -131,7 +131,7 @@ def pileup_to_bigwig(
             for row in tqdm(
                 tabix.fetch(contig),
                 desc=f"Writing {contig}.",
-                total=contig_lines[contig],
+                total=lines_by_contig[contig],
                 leave=False,
             ):
                 keep_basemod, genomic_coord, modified_in_row, valid_in_row = (

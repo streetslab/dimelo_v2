@@ -18,6 +18,7 @@ from . import test_data, utils
 ####                                           Loader wrappers                                              ####
 ################################################################################################################
 
+
 def regions_to_list(
     function_handle,
     regions,
@@ -79,7 +80,7 @@ def regions_to_list(
             else 1,  # if parallelization is within region
             **kwargs,
         )
-
+        if cores_to_run > 1:
             # Use executor.map without lambda
             results = list(
                 tqdm(
@@ -88,16 +89,20 @@ def regions_to_list(
                     desc=f"Processing regions in parallel across {cores_to_run}",
                 )
             )
-    else:
-        # Single-threaded fallback
-        results = [
-            process_region(
-                region_string=region, function_handle=function_handle, cores=1, **kwargs
-            )
-            for region in tqdm(region_strings, desc="Processing regions")
-        ]
+        else:
+            # Single-threaded fallback
+            results = [
+                process_region(
+                    region_string=region,
+                    function_handle=function_handle,
+                    cores=1,
+                    **kwargs,
+                )
+                for region in tqdm(region_strings, desc="Processing regions")
+            ]
 
     return results
+
 
 def process_region(region_string, function_handle, **kwargs):
     """
