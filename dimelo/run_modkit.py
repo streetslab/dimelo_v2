@@ -11,40 +11,58 @@ import sys
 from pathlib import Path
 from typing import Optional, cast
 
+from packaging import version
 from tqdm.auto import tqdm
 
 # This should be updated in tandem with the environment.yml nanoporetech::modkit version
-EXPECTED_MODKIT_VERSION = "0.2.4"
+MIN_MODKIT_VERSION = "0.2.4"
 
 """
 Import checks
 """
-# Add conda env bin folder to path if it is not already present
-# On some systems, the directory containing executables for the active environment isn't automatically on the path
-# If this is the case, add that directory to the path so modkit can run
-current_interpreter = sys.executable
-env_bin_path = os.path.dirname(current_interpreter)
-if env_bin_path not in os.environ["PATH"]:
-    print(
-        f"PATH does not include the conda environment /bin folder. Adding {env_bin_path}."
-    )
-    os.environ["PATH"] = f"{env_bin_path}:{os.environ['PATH']}"
-    print(f"PATH is now {os.environ['PATH']}")
-
 # Check modkit on first import: does it run; does it have the right version
 try:
     result = subprocess.run(["modkit", "--version"], stdout=subprocess.PIPE, text=True)
-    modkit_version = result.stdout
-    if modkit_version.split()[1] == EXPECTED_MODKIT_VERSION:
-        print(f"modkit found with expected version {EXPECTED_MODKIT_VERSION}")
+    modkit_version = result.stdout.strip().split()[-1]
+    if version.parse(modkit_version) >= version.parse(MIN_MODKIT_VERSION):
+        print(
+            f"modkit found with version {modkit_version}, which meets the minimum requirement ({MIN_MODKIT_VERSION})."
+        )
     else:
         print(
-            f"modkit found with unexpected version {modkit_version.split()[1]}. Versions other than {EXPECTED_MODKIT_VERSION} may exhibit unexpected behavior. It is recommended that you use v{EXPECTED_MODKIT_VERSION}"
+            f"WARNING: modkit found with version {modkit_version}, but version {MIN_MODKIT_VERSION} or later is required. "
+            f"Consider updating modkit to avoid unexpected behavior."
         )
-except subprocess.CalledProcessError:
-    print(
-        'Executable not found for modkit. Install dimelo using "conda env create -f environment.yml" or install modkit manually to your conda environment using "conda install nanoporetech::modkit==0.2.4". Without modkit you cannot run parse_bam functions.'
-    )
+except (FileNotFoundError, subprocess.CalledProcessError):
+    # Add conda env bin folder to path if it is not already present
+    # On some systems, the directory containing executables for the active environment isn't automatically on the path
+    # If this is the case, add that directory to the path so modkit can run
+    current_interpreter = sys.executable
+    env_bin_path = os.path.dirname(current_interpreter)
+    if env_bin_path not in os.environ["PATH"]:
+        print(
+            f"PATH does not include the conda environment /bin folder. Adding {env_bin_path}."
+        )
+        os.environ["PATH"] = f"{env_bin_path}:{os.environ['PATH']}"
+        print(f"PATH is now {os.environ['PATH']}")
+    try:
+        result = subprocess.run(
+            ["modkit", "--version"], stdout=subprocess.PIPE, text=True
+        )
+        modkit_version = result.stdout.strip().split()[-1]
+        if version.parse(modkit_version) >= version.parse(MIN_MODKIT_VERSION):
+            print(
+                f"modkit found with version {modkit_version}, which meets the minimum requirement ({MIN_MODKIT_VERSION})."
+            )
+        else:
+            print(
+                f"WARNING: modkit found with version {modkit_version}, but version {MIN_MODKIT_VERSION} or later is required. "
+                f"Consider updating modkit to avoid unexpected behavior."
+            )
+    except (FileNotFoundError, subprocess.CalledProcessError) as e:
+        raise RuntimeError(
+            'Unable to execute modkit. Install dimelo using "conda env create -f environment.yml" or install modkit manually to your conda environment using "conda install nanoporetech::modkit==0.2.4". Without modkit you cannot run parse_bam functions.'
+        ) from e
 
 
 def run_with_progress_bars(

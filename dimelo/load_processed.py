@@ -202,7 +202,7 @@ def pileup_counts_from_bedmethyl(
             concurrent.futures.as_completed(futures),
             total=len(futures),
             disable=quiet,
-            desc=f"Loading genomic chunks, up to {chunk_size/1000}kb per chunk",
+            desc=f"Loading genomic chunks, up to {chunk_size / 1000}kb per chunk",
         ):
             try:
                 future.result()
@@ -320,7 +320,7 @@ def pileup_vectors_from_bedmethyl(
             concurrent.futures.as_completed(futures),
             total=len(futures),
             disable=quiet,
-            desc=f"Loading genomic chunks, up to {chunk_size/1000}kb per chunk",
+            desc=f"Loading genomic chunks, up to {chunk_size / 1000}kb per chunk",
         ):
             try:
                 future.result()
