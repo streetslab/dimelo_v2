@@ -18,7 +18,6 @@ from . import test_data, utils
 ####                                           Loader wrappers                                              ####
 ################################################################################################################
 
-
 def regions_to_list(
     function_handle,
     regions,
@@ -46,7 +45,7 @@ def regions_to_list(
         **kwargs: all necessary keyword arguments to pass down to the loader
 
     Returns:
-        list([function_handle returns for region in regions])
+        List(function_handle return objects per region)
     """
     regions_dict = utils.regions_dict_from_input(
         regions,
@@ -54,8 +53,8 @@ def regions_to_list(
     )
 
     # Flatten regions into a list of (chromosome, start, end, strand)
-    region_tuples = [
-        (chromosome, start, end, strand)
+    region_strings = [
+        f"{chromosome}:{start}-{end},{strand}"
         for chromosome, region_list in regions_dict.items()
         for start, end, strand in region_list
     ]
@@ -81,33 +80,38 @@ def regions_to_list(
             **kwargs,
         )
 
-        results = list(
-            tqdm(
-                executor.map(process_partial, region_tuples),
-                total=len(region_tuples),
-                desc=f"Processing regions in parallel across {cores_to_run}",
-                disable=quiet or parallelize_within_regions,
+            # Use executor.map without lambda
+            results = list(
+                tqdm(
+                    executor.map(process_partial, region_strings),
+                    total=len(region_strings),
+                    desc=f"Processing regions in parallel across {cores_to_run}",
+                )
             )
-        )
+    else:
+        # Single-threaded fallback
+        results = [
+            process_region(
+                region_string=region, function_handle=function_handle, cores=1, **kwargs
+            )
+            for region in tqdm(region_strings, desc="Processing regions")
+        ]
 
     return results
 
-
-def process_region(region_tuple, function_handle, **kwargs):
+def process_region(region_string, function_handle, **kwargs):
     """
-    Helper function for regions_to_list. Takes in the region tuple, creates a string, and runs the loader function.
+    process_region simply exists to convert position arguments into keyword arguments to make executor.map work
 
     Args:
-        region_tuple: chromosome, start, end, strand
-        function_handle: a function that takes a regions specifier and loads processed data
-        **kwargs: the remaining kwargs necessary to run the function in question
-
+        region_string: passed down with regions keyword
+        function_handle: function to call with regions and other kwargs
+        **kwargs: all keyword arguments passed to regions_to_list. These must be sufficient for whichever load_processed function
+            if being referenced by function_handle
     Returns:
-        Whatever function_handle returns
+        function_handle return value
     """
-    chromosome, start_coord, end_coord, strand = region_tuple
-    single_region_str = f"{chromosome}:{start_coord}-{end_coord},{strand}"
-    return function_handle(regions=single_region_str, **kwargs)
+    return function_handle(regions=region_string, **kwargs)
 
 
 ################################################################################################################

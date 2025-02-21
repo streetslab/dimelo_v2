@@ -361,8 +361,10 @@ def make_browser_figure(
                     color=motif_df["prob"],
                     colorscale=utils.DEFAULT_COLORSCALES[motif],
                     colorbar=dict(
-                        title=f"{motif} probability",
-                        titleside="right",
+                        title=dict(
+                            text=f"{motif} probability",
+                            side="right",
+                        ),
                         tickmode="array",
                         tickvals=[min_overall, max_overall],
                         ticktext=[
