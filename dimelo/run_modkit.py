@@ -16,24 +16,17 @@ from tqdm.auto import tqdm
 
 # This should be updated in tandem with the environment.yml nanoporetech::modkit version
 MIN_MODKIT_VERSION = "0.2.4"
+MAX_MODKIT_VERSION = "0.2.6"
 
 """
 Import checks
 """
 # Check modkit on first import: does it run; does it have the right version
+modkit_version = "NA"
 try:
     result = subprocess.run(["modkit", "--version"], stdout=subprocess.PIPE, text=True)
     modkit_version = result.stdout.strip().split()[-1]
-    if version.parse(modkit_version) >= version.parse(MIN_MODKIT_VERSION):
-        print(
-            f"modkit found with version {modkit_version}, which meets the minimum requirement ({MIN_MODKIT_VERSION})."
-        )
-    else:
-        print(
-            f"WARNING: modkit found with version {modkit_version}, but version {MIN_MODKIT_VERSION} or later is required. "
-            f"Consider updating modkit to avoid unexpected behavior."
-        )
-except (FileNotFoundError, subprocess.CalledProcessError):
+except Exception:
     # Add conda env bin folder to path if it is not already present
     # On some systems, the directory containing executables for the active environment isn't automatically on the path
     # If this is the case, add that directory to the path so modkit can run
@@ -50,19 +43,24 @@ except (FileNotFoundError, subprocess.CalledProcessError):
             ["modkit", "--version"], stdout=subprocess.PIPE, text=True
         )
         modkit_version = result.stdout.strip().split()[-1]
-        if version.parse(modkit_version) >= version.parse(MIN_MODKIT_VERSION):
-            print(
-                f"modkit found with version {modkit_version}, which meets the minimum requirement ({MIN_MODKIT_VERSION})."
-            )
-        else:
-            print(
-                f"WARNING: modkit found with version {modkit_version}, but version {MIN_MODKIT_VERSION} or later is required. "
-                f"Consider updating modkit to avoid unexpected behavior."
-            )
     except (FileNotFoundError, subprocess.CalledProcessError) as e:
         raise RuntimeError(
             'Unable to execute modkit. Install dimelo using "conda env create -f environment.yml" or install modkit manually to your conda environment using "conda install nanoporetech::modkit==0.2.4". Without modkit you cannot run parse_bam functions.'
         ) from e
+finally:
+    if (
+        version.parse(MAX_MODKIT_VERSION)
+        >= version.parse(modkit_version)
+        >= version.parse(MIN_MODKIT_VERSION)
+    ):
+        print(
+            f"modkit found with version {modkit_version}, which meets the requirement ({MIN_MODKIT_VERSION}-{MAX_MODKIT_VERSION})."
+        )
+    else:
+        print(
+            f"WARNING: modkit found with version {modkit_version}, but version {MIN_MODKIT_VERSION} or later is required. "
+            f"Consider updating modkit to avoid unexpected behavior."
+        )
 
 
 def run_with_progress_bars(

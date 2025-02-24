@@ -5,4 +5,4 @@ channels:
   - defaults
 dependencies:
   - python>=3.11
-  - nanoporetech::modkit>=0.2.4
+  - "nanoporetech::modkit>=0.2.4,<=0.2.6"
