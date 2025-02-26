@@ -15,6 +15,7 @@ def plot_read_browser(
     single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
     hover: bool = True,
+    subset_parameters: dict | None = None,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
     """
@@ -42,6 +43,9 @@ def plot_read_browser(
             more condensed visualization. Note that "collapse" is mutually exclusive with all other sorting options,
             and is only allowed to be passed as a single string option.
         hover: if False, disables display of information on mouse hover
+        subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
+            reads to be returned. If not None, at least one of n or frac must be provided. The array
+            parameter should not be provided here.
 
     Returns:
         plotly Figure object containing the plot
@@ -65,6 +69,7 @@ def plot_read_browser(
         single_strand=single_strand,
         sort_by=sort_by,
         calculate_mod_fractions=False,
+        subset_parameters=subset_parameters,
     )
 
     mod_vector_index = entry_labels.index("mod_vector")
