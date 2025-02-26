@@ -35,6 +35,11 @@ DEFAULT_COLORSCALES = defaultdict(lambda: ["white", "grey"])
 DEFAULT_COLORSCALES.update([(k, ["white", v]) for k, v in DEFAULT_COLORS.items()])
 
 
+# Define the source of randomness for a variety of purposes throughout the package
+# TODO: how best to initialize seed for random state, to allow for reproducibility?
+rng = np.random.default_rng()
+
+
 def cores_to_run(cores):
     cores_avail = multiprocessing.cpu_count()
     if cores is None or cores > cores_avail:

@@ -1,5 +1,4 @@
 import gzip
-import random
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
@@ -555,7 +554,7 @@ def read_vectors_from_hdf5(
 
     # If 'shuffle' appears anywhere in sort_by, we first shuffle the list
     if "shuffle" in sort_by:
-        random.shuffle(read_tuples_all)
+        utils.rng.shuffle(read_tuples_all)
 
     try:
         sort_by_indices = [
