@@ -605,6 +605,7 @@ def readwise_binary_modification_arrays(
     thresh: float | None = None,
     relative: bool = True,
     cores: int | None = None,  # currently unused
+    subset_parameters: dict | None = None,
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
     Pulls a list of read data out of a file containing processed read vectors, formatted with
@@ -647,6 +648,9 @@ def readwise_binary_modification_arrays(
             There is not currently a check for all reads being on the same chromosome if relative=False, but
             this could create unexpected behaviour for a the standard visualizations.
         cores: cores across which to parallelize processes (currently unused)
+        subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
+            reads to be returned. If not None, at least one of n or frac must be provided. The array
+            parameter should not be provided here.
 
     Returns:
         Returns a tuple of three arrays, of length (N_READS * len(mod_names)), and a dict of regions.
