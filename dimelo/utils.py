@@ -450,9 +450,13 @@ def random_sample(
         this doesn't actually matter. However, it is being left off to prevent confusion for the end user.
     """
     size = pd.core.sample.process_sampling_size(n, frac, replace)
+    print(
+        f"n: {n}, frac: {frac}, replace: {replace}, len(array): {len(array)}, size: {size}"
+    )
     if size is None:
         assert frac is not None
         size = round(frac * len(array))
+    print(f"size: {size}")
     return rng.choice(
         a=array,
         size=size,

@@ -44,8 +44,7 @@ def plot_read_browser(
             and is only allowed to be passed as a single string option.
         hover: if False, disables display of information on mouse hover
         subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
-            reads to be returned. If not None, at least one of n or frac must be provided. The array
-            parameter should not be provided here.
+            reads to be returned. If not None, at least one of n or frac must be provided.
 
     Returns:
         plotly Figure object containing the plot
@@ -131,6 +130,10 @@ def format_browser_data(
     Returns:
         * dataframe defining the start, end, name, and desired y-index (sorting) of each read
         * dataframe defining all necessary information to place each modification event on the browser
+
+    TODO: There is an observed issue where there are duplicated reads; duplicates are currently thrown away. This only
+        manifests itself when subsetting reads, as different random subsets of the same requested size will show up as
+        different numbers of rows.
     """
     # Coerce read tuples to initial dataframe, throwing away unnecessary columns
     to_exclude = ["chromosome", "strand", "region_start", "region_end"]
