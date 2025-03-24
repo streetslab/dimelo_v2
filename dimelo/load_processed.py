@@ -981,7 +981,13 @@ def read_vectors_from_hdf5(
     # This is sanitizing the dataset entries and adjusting prob values if needed
     if binarized:
         read_tuples_processed = [
-            convert_bytes_to_strings(tup) for tup in read_tuples_raw
+            convert_bytes_to_strings(tup)
+            for tup in tqdm(
+                read_tuples_raw,
+                desc="Converting bytes to strings",
+                disable=quiet,
+                leave=False,
+            )
         ]
     else:
         read_tuples_processed = [
@@ -990,8 +996,12 @@ def read_vectors_from_hdf5(
                 readwise_datasets.index("mod_vector"),
                 readwise_datasets.index("val_vector"),
             )
-            for tup in read_tuples_raw
+            for tup in tqdm(
+                read_tuples_raw, desc="Adjusting mod probs", disable=quiet, leave=False
+            )
         ]
+
+    del read_tuples_raw
 
     if calculate_mod_fractions:
         # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
@@ -1001,7 +1011,12 @@ def read_vectors_from_hdf5(
             str, defaultdict[str, float]
         ] = defaultdict(lambda: defaultdict(lambda: 0.0))
         for motif in motifs:
-            for read_tuple in read_tuples_processed:
+            for read_tuple in tqdm(
+                read_tuples_processed,
+                desc=f"Calculating mod fractions for {motif}",
+                disable=quiet,
+                leave=False,
+            ):
                 if read_tuple[readwise_datasets.index("motif")] == motif:
                     mod_sum = np.sum(read_tuple[readwise_datasets.index("mod_vector")])
                     val_sum = np.sum(read_tuple[readwise_datasets.index("val_vector")])
@@ -1023,6 +1038,8 @@ def read_vectors_from_hdf5(
             )
     else:
         read_tuples_all = read_tuples_processed
+
+    del read_tuples_processed
 
     ## Sort the reads
 
@@ -1051,6 +1068,8 @@ def read_vectors_from_hdf5(
         )
     else:
         sorted_read_tuples = read_tuples_all
+
+    del read_tuples_all
 
     return sorted_read_tuples, readwise_datasets, regions_dict
 
