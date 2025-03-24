@@ -21,6 +21,7 @@ from . import test_data, utils
 # on 32 cores is fairly similar, but sitting in the middle of the range should support 10x more cores (beyond
 # the reasonable upper bound) and 10x fewer cores (which is about the reasonable lower bound).
 DEFAULT_CHUNK_SIZE = 1_000_000
+DEFAULT_READS_CHUNK_SIZE = 100
 
 ################################################################################################################
 ####                                           Loader wrappers                                              ####
@@ -632,7 +633,7 @@ def readwise_binary_modification_arrays(
     quiet: bool = False,
     cores: int | None = None,
     subset_parameters: dict | None = None,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_size: int = DEFAULT_READS_CHUNK_SIZE,
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
     Primarily designed as a helper function for single-read plotting, but can be used by a user.
@@ -803,7 +804,7 @@ def read_vectors_from_hdf5(
     quiet: bool = False,  # currently unused; change to default False when pbars are implemented
     cores: int | None = None,  # currently unused
     subset_parameters: dict | None = None,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_size: int = DEFAULT_READS_CHUNK_SIZE,
 ) -> tuple[list[tuple], list[str], dict | None]:
     """
     User-facing function.
@@ -885,13 +886,68 @@ def read_vectors_from_hdf5(
             compressed_binary_datasets = []
             binarized = True  # in this case all this will do is make it so we don't apply a +1/512 correction to the mod_vector
 
+        # Pre-load metadata so we can identify reads to pull from file
+        pbar = tqdm(total=5, desc="Loading indices", leave=False, disable=quiet)
+        read_chromosomes = np.array(h5["chromosome"], dtype=str)
+        pbar.update(1)
+        read_starts = np.array(h5["read_start"])
+        pbar.update(1)
+        read_ends = np.array(h5["read_end"])
+        pbar.update(1)
+        read_motifs = np.array(h5["motif"], dtype=str)
+        pbar.update(1)
+        ref_strands = np.array(h5["strand"], dtype=str)
+        pbar.update(1)
+        pbar.close()
+
     regions_dict = utils.regions_dict_from_input(
         regions=regions,
         window_size=window_size,
     )
-    chunks_list = utils.process_chunks_from_regions_dict(
-        regions_dict, chunk_size=chunk_size
-    )
+    relevant_read_indices = []
+    motifs_mask = np.isin(read_motifs, motifs)
+    for chrom, region_list in tqdm(
+        regions_dict.items(),
+        desc="Identifying reads by region",
+        leave=False,
+        disable=quiet,
+    ):
+        chromosome_motif_mask = (read_chromosomes == chrom) & motifs_mask
+        cm_indices = np.flatnonzero(chromosome_motif_mask)
+        for region_start, region_end, region_strand in region_list:
+            # Each of these is a Boolean array of the same length ~1 million
+            subset_read_ends = read_ends[cm_indices]
+            subset_read_starts = read_starts[cm_indices]
+            read_span_mask = (subset_read_ends > region_start) & (
+                subset_read_starts < region_end
+            )
+
+            # This last condition might not even apply if single_strand=False or if the region_strand is not +/-,
+            # so handle that logically outside to skip it entirely when possible:
+            if single_strand and region_strand in ["+", "-"]:
+                subset_ref_strands = ref_strands[cm_indices]
+                strand_mask = subset_ref_strands == region_strand
+                final_mask = read_span_mask & strand_mask
+            else:
+                final_mask = read_span_mask
+
+            # Get the final indices relative to the original array:
+            region_read_indices = cm_indices[np.flatnonzero(final_mask)]
+
+            if subset_parameters is not None:
+                region_read_indices = np.sort(
+                    utils.random_sample(region_read_indices, **subset_parameters)
+                )
+            relevant_read_indices.extend([int(index) for index in region_read_indices])
+
+    read_index_chunks = [
+        np.array(sorted(list(set(relevant_read_indices[i : i + chunk_size]))))
+        for i in range(
+            0,
+            len(relevant_read_indices),
+            chunk_size,
+        )
+    ]
 
     cores_to_run = utils.cores_to_run(cores)
 
@@ -902,9 +958,6 @@ def read_vectors_from_hdf5(
         process_partial = partial(
             read_tuples_process_chunk,
             file=file,
-            motifs=motifs,
-            single_strand=single_strand,
-            subset_parameters=subset_parameters,
             readwise_datasets=readwise_datasets,
             compressed_binary_datasets=compressed_binary_datasets,
             binarized=binarized,
@@ -912,8 +965,8 @@ def read_vectors_from_hdf5(
         read_tuples_raw = list(
             chain.from_iterable(
                 tqdm(
-                    executor.map(process_partial, chunks_list),
-                    total=len(chunks_list),
+                    executor.map(process_partial, read_index_chunks),
+                    total=len(read_index_chunks),
                     desc="Loading data",
                     disable=quiet,
                     leave=False,
@@ -1058,58 +1111,20 @@ def reads_from_fake(
 
 
 def read_tuples_process_chunk(
-    chunk,
+    read_index_chunk,
     file,
-    motifs,
-    single_strand,
-    subset_parameters,
     readwise_datasets,
     compressed_binary_datasets,
     binarized,
 ):
-    chromosome = chunk["chromosome"]
-    region_start = chunk["region_start"]
-    region_end = chunk["region_end"]
-    subregion_start = chunk["subregion_start"]
-    subregion_end = chunk["subregion_end"]
-    strand = chunk["strand"]
-
-    last_subregion_in_region = subregion_end == region_end
-
     with h5py.File(file, "r") as h5:
-        # Pre-load metadata so we can identify reads to pull from file
-        read_chromosomes = np.array(h5["chromosome"], dtype=str)
-        read_starts = np.array(h5["read_start"])
-        read_ends = np.array(h5["read_end"])
-        read_motifs = np.array(h5["motif"], dtype=str)
-        ref_strands = np.array(h5["strand"], dtype=str)
-
-        relevant_read_indices = np.flatnonzero(
-            (read_ends > subregion_start)
-            & (read_starts < subregion_end)
-            & np.isin(read_motifs, motifs)
-            & (read_chromosomes == chromosome)
-            & (
-                (not single_strand)
-                | (strand not in ["+", "-"])
-                | (ref_strands == strand)
-            )
-            # if this is the last subregion, take any reads with any overlap
-            # otherwise, take only reads that end within the subregion, because
-            # those that extend into the next will be grabbed there!
-            & (last_subregion_in_region | (read_ends <= subregion_end))
-        )
-        if subset_parameters is not None:
-            relevant_read_indices = np.sort(
-                utils.random_sample(relevant_read_indices, **subset_parameters)
-            )
         read_tuples_raw = list(
             zip(
                 *(
                     retrieve_h5_data(
                         h5=h5,
                         dataset=dataset,
-                        indices=relevant_read_indices,
+                        indices=read_index_chunk,
                         compressed=dataset in compressed_binary_datasets,
                         dtype=np.uint8,
                         decompressor=gzip.decompress,
@@ -1117,9 +1132,9 @@ def read_tuples_process_chunk(
                     )
                     for dataset in readwise_datasets
                 ),
-                [region_start for _ in relevant_read_indices],
-                [region_end for _ in relevant_read_indices],
-                [strand for _ in relevant_read_indices],
+                ["region_start" for _ in read_index_chunk],
+                ["region_end" for _ in read_index_chunk],
+                ["strand" for _ in read_index_chunk],
             )
         )
 
