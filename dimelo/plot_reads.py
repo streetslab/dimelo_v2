@@ -29,6 +29,8 @@ def plot_reads(
     sort_by: str | list[str] = "shuffle",
     thresh: float | None = None,
     relative: bool = True,
+    quiet: bool = True,
+    cores: int | None = None,
     **kwargs,
 ) -> Axes:
     """
@@ -49,6 +51,8 @@ def plot_reads(
         sort_by: ordered list for hierarchical sort. Currently only smallest to biggest.
         thresh: if no threshold has been applied already, this will threshold the mod calls for plotting (method is only boolean)
         relative: if True, all regions are centered
+        quiet: disables progress bars
+        cores: CPU cores across which to parallelize processing. Default to None, which means all available.
 
     Returns:
         Axes object containing the plot
@@ -84,6 +88,8 @@ def plot_reads(
                     thresh=thresh,
                     relative=relative,
                     sort_by=sort_by,
+                    quiet=quiet,
+                    cores=cores,
                 )
             )
 

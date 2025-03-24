@@ -3,6 +3,7 @@ import gzip
 import multiprocessing
 from collections import defaultdict
 from functools import partial
+from itertools import chain
 from multiprocessing import shared_memory
 from pathlib import Path
 
@@ -618,259 +619,6 @@ def process_pileup_row(
 ################################################################################################################
 
 
-def read_vectors_from_hdf5(
-    file: str | Path,
-    motifs: list[str],
-    regions: str | Path | list[str | Path] | None = None,
-    window_size: int | None = None,
-    single_strand: bool = False,
-    sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
-    calculate_mod_fractions: bool = True,
-    quiet: bool = True,  # currently unused; change to default False when pbars are implemented
-    cores: int | None = None,  # currently unused
-    subset_parameters: dict | None = None,
-) -> tuple[list[tuple], list[str], dict | None]:
-    """
-    User-facing function.
-
-    Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
-    for read-by-read vector processing downstream use cases.
-
-    The flow of operation here is we load up the h5 file then loop through our regions and pick
-    out reads corresponding to our criteria. Criteria include chromosome, read starts and ends
-    (compared to region starts and ends), motif, and strand (if single_strand is True). The indices
-    for the desired reads are identified region-by-region, then all the reads for the region (or
-    the whole h5, if no region is passed) are loaded using the process_data function and put into
-    a list. The bytes are then decoded for the array entries, which are manually compressed because
-    h5py wasn't behaving.
-
-    There's some adjustment for the raw probability (no thresh) to match modkit extract outputs.
-    Specifically, the 0-255 8bit int has 0.5 added before dividing by 256, giving mod qualities
-    between 0.001953 and 0.99805 for bases in valid motifs. (Invalid positions have zeros.)
-
-    After this processing, we calculate modification fractions, sort, and return.
-
-    TODO: Implement progress bars and parallelization as with pileup loaders
-
-    Args:
-        file: Path to an hdf5 (.h5) file containing modification data for single reads,
-            stored in datasets read_name, chromosome, read_start,
-            read_end, base modification motif, mod_vector, and val_vector.
-        regions: Single or list of Path objects or strings. Path objects must point to .bed
-            files, strings can be .bed paths or region string in the format chrX:XXX-XXX.
-            All should all be regions for which your original .bam file had reads extracted,
-            although by design this method will not raise an error if any region contains
-            zero reads, as this may simply be a matter of low read depth.
-            If no regions are specified, the entire .h5 file will be returned. This may cause
-            memory issues.
-        motifs: types of modification to extract data for. Motifs are specified as
-            {DNA_sequence},{position_of_modification}. For example, a methylated adenine is specified
-            as 'A,0' and CpG methylation is specified as 'CG,0'.
-        single_strand: True means we only grab counts from reads from the same strand as
-            the region of interest, False means we always grab both strands within the regions
-        window_size: An optional parameter for creating centered windows for the provided regions.
-            If provided, all regions will be adjusted to be the same size and centered. If not provided,
-            all regions should already be the same size, or there should be only one.
-        sort_by: Read properties by which to sort, either one string or a list of strings. Options
-            include chromosome, region_start, region_end, read_start, read_end, and motif. More to
-            be added in future.
-        quiet: silences progress bars (currently unused)
-        cores: cores across which to parallelize processes (currently unused)
-        subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
-            reads to be returned. If not None, at least one of n or frac must be provided. The array
-            parameter should not be provided here.
-
-    Returns:
-        a list of tuples, each tuple containing all datasets corresponding to an individual read that
-        was within the specified regions.
-        a list of strings, naming the datasets returned.
-        a regions_dict, containing lists of (region_start,region_end) coordinates by chromosome/contig.
-
-    TODO: The way the subsetting is implemented is confusing, in that you need to pass all but one of
-        the available parameters.
-    """
-    with h5py.File(file, "r") as h5:
-        datasets: list[str] = [
-            name for name, obj in h5.items() if isinstance(obj, h5py.Dataset)
-        ]
-        if "threshold" in h5:
-            # we are looking at an .h5 file with the new, much better compressed format that does
-            # not know the data type intrinsically for mod and val vectors, so we must check
-            readwise_datasets = [
-                dataset for dataset in datasets if dataset not in ["threshold"]
-            ]
-            compressed_binary_datasets = ["mod_vector", "val_vector"]
-            threshold_applied_to_h5 = h5["threshold"][()]
-            binarized = not np.isnan(threshold_applied_to_h5)
-        else:
-            # backwards compatible with the old h5 file structure
-            # If we remove backwards compatibility, beta test (Feb 2024) h5 extractions will not run
-            readwise_datasets = datasets
-            compressed_binary_datasets = []
-            binarized = True  # in this case all this will do is make it so we don't apply a +1/512 correction to the mod_vector
-
-        # Pre-load metadata so we can identify reads to pull from file
-        read_chromosomes = np.array(h5["chromosome"], dtype=str)
-        read_starts = np.array(h5["read_start"])
-        read_ends = np.array(h5["read_end"])
-        read_motifs = np.array(h5["motif"], dtype=str)
-        ref_strands = np.array(h5["strand"], dtype=str)
-
-        # Identify reads to load, then load them
-        if regions is not None:
-            regions_dict = utils.regions_dict_from_input(
-                regions=regions,
-                window_size=window_size,
-            )
-            read_tuples_raw = []
-            for chrom, region_list in regions_dict.items():
-                for region_start, region_end, region_strand in region_list:
-                    # Find the read indices that we want to load
-                    # TODO: consider building this up and then loading all at the end, chunked
-                    # TODO: consolidate logic into clear variables
-                    relevant_read_indices = np.flatnonzero(
-                        (read_ends > region_start)
-                        & (read_starts < region_end)
-                        & np.isin(read_motifs, motifs)
-                        & (read_chromosomes == chrom)
-                        & (
-                            (not single_strand)
-                            | (region_strand not in ["+", "-"])
-                            | (ref_strands == region_strand)
-                        )
-                    )
-                    if subset_parameters is not None:
-                        relevant_read_indices = np.sort(
-                            utils.random_sample(
-                                relevant_read_indices, **subset_parameters
-                            )
-                        )
-                    read_tuples_raw += list(
-                        zip(
-                            *(
-                                retrieve_h5_data(
-                                    h5=h5,
-                                    dataset=dataset,
-                                    indices=relevant_read_indices,
-                                    compressed=dataset in compressed_binary_datasets,
-                                    dtype=np.uint8,
-                                    decompressor=gzip.decompress,
-                                    binarized=binarized,
-                                )
-                                for dataset in readwise_datasets
-                            ),
-                            [region_start for _ in relevant_read_indices],
-                            [region_end for _ in relevant_read_indices],
-                            [region_strand for _ in relevant_read_indices],
-                        )
-                    )
-        else:
-            regions_dict = None
-            relevant_read_indices = np.flatnonzero(np.isin(read_motifs, motifs))
-            if subset_parameters is not None:
-                relevant_read_indices = np.sort(
-                    utils.random_sample(relevant_read_indices, **subset_parameters)
-                )
-            read_tuples_raw = list(
-                zip(
-                    *(
-                        retrieve_h5_data(
-                            h5=h5,
-                            dataset=dataset,
-                            indices=relevant_read_indices,
-                            compressed=dataset in compressed_binary_datasets,
-                            dtype=np.uint8,
-                            decompressor=gzip.decompress,
-                            binarized=binarized,
-                        )
-                        for dataset in readwise_datasets
-                    ),
-                    [-1 for _ in relevant_read_indices],
-                    [-1 for _ in relevant_read_indices],
-                    ["." for _ in relevant_read_indices],
-                )
-            )
-    #  We add region information (start, end, and strand; chromosome is already present!)
-    # so that it is possible to sort by and process based on these
-    readwise_datasets += ["region_start", "region_end", "region_strand"]
-
-    # This is sanitizing the dataset entries and adjusting prob values if needed
-    if binarized:
-        read_tuples_processed = [
-            convert_bytes_to_strings(tup) for tup in read_tuples_raw
-        ]
-    else:
-        read_tuples_processed = [
-            adjust_mod_probs_in_tuples(
-                convert_bytes_to_strings(tup),
-                readwise_datasets.index("mod_vector"),
-                readwise_datasets.index("val_vector"),
-            )
-            for tup in read_tuples_raw
-        ]
-
-    if calculate_mod_fractions:
-        # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
-        readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
-        # dict[read_name][motif]=modified fraction of motif in read, float
-        mod_fractions_by_read_name_by_motif: defaultdict[
-            str, defaultdict[str, float]
-        ] = defaultdict(lambda: defaultdict(lambda: 0.0))
-        for motif in motifs:
-            for read_tuple in read_tuples_processed:
-                if read_tuple[readwise_datasets.index("motif")] == motif:
-                    mod_sum = np.sum(read_tuple[readwise_datasets.index("mod_vector")])
-                    val_sum = np.sum(read_tuple[readwise_datasets.index("val_vector")])
-                    mod_fraction = mod_sum / val_sum if val_sum > 0 else 0
-                    mod_fractions_by_read_name_by_motif[
-                        read_tuple[readwise_datasets.index("read_name")]
-                    ][motif] = mod_fraction
-
-        read_tuples_all = []
-        for read_tuple in read_tuples_processed:
-            read_tuples_all.append(
-                tuple(val for val in read_tuple)
-                + tuple(
-                    mod_frac
-                    for mod_frac in mod_fractions_by_read_name_by_motif[
-                        read_tuple[readwise_datasets.index("read_name")]
-                    ].values()
-                )
-            )
-    else:
-        read_tuples_all = read_tuples_processed
-
-    ## Sort the reads
-
-    # Enforce that sort_by is a list
-    if not isinstance(sort_by, list):
-        sort_by = [sort_by]
-
-    # If 'shuffle' appears anywhere in sort_by, we first shuffle the list
-    if "shuffle" in sort_by:
-        utils.rng.shuffle(read_tuples_all)
-
-    try:
-        sort_by_indices = [
-            readwise_datasets.index(sort_item)
-            for sort_item in sort_by
-            if sort_item != "shuffle"
-        ]
-    except ValueError as e:
-        raise ValueError(
-            f"Sorting error. {e}. Datasets include {readwise_datasets}. If you need mod fraction sorting make sure you are not setting calculate_read_fraction to False."
-        ) from e
-
-    if len(sort_by_indices) > 0:
-        sorted_read_tuples = sorted(
-            read_tuples_all, key=lambda x: tuple(x[index] for index in sort_by_indices)
-        )
-    else:
-        sorted_read_tuples = read_tuples_all
-
-    return sorted_read_tuples, readwise_datasets, regions_dict
-
-
 def readwise_binary_modification_arrays(
     file: str | Path,
     motifs: list[str],
@@ -881,9 +629,10 @@ def readwise_binary_modification_arrays(
     sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
     thresh: float | None = None,
     relative: bool = True,
-    quiet: bool = True,  # currently unused; change to default False when pbars are implemented
-    cores: int | None = None,  # currently unused
+    quiet: bool = False,
+    cores: int | None = None,
     subset_parameters: dict | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> tuple[list[np.ndarray], np.ndarray[int], np.ndarray[str], dict | None]:
     """
     Primarily designed as a helper function for single-read plotting, but can be used by a user.
@@ -929,11 +678,12 @@ def readwise_binary_modification_arrays(
             in the genomes, centered at the center of the region. If False, absolute coordinates are provided.
             There is not currently a check for all reads being on the same chromosome if relative=False, but
             this could create unexpected behaviour for a the standard visualizations.
-        quiet: silences progress bars (currently unused)
-        cores: cores across which to parallelize processes (currently unused)
+        quiet: silences progress bars
+        cores: cores across which to parallelize processes
         subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
             reads to be returned. If not None, at least one of n or frac must be provided. The array
             parameter should not be provided here.
+        chunk_size: region chunks for parallelized loading.
 
     Returns:
         Returns a tuple of three arrays, of length (N_READS * len(mod_names)), and a dict of regions.
@@ -956,6 +706,10 @@ def readwise_binary_modification_arrays(
             window_size=window_size,
             single_strand=single_strand,
             sort_by=sort_by,
+            quiet=quiet,
+            cores=cores,
+            subset_parameters=subset_parameters,
+            chunk_size=chunk_size,
         )
         read_name_index = datasets.index("read_name")
         mod_vector_index = datasets.index("mod_vector")
@@ -1038,6 +792,216 @@ def readwise_binary_modification_arrays(
         )
 
 
+def read_vectors_from_hdf5(
+    file: str | Path,
+    motifs: list[str],
+    regions: str | Path | list[str | Path] | None = None,
+    window_size: int | None = None,
+    single_strand: bool = False,
+    sort_by: str | list[str] = ["chromosome", "region_start", "read_start"],
+    calculate_mod_fractions: bool = True,
+    quiet: bool = False,  # currently unused; change to default False when pbars are implemented
+    cores: int | None = None,  # currently unused
+    subset_parameters: dict | None = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> tuple[list[tuple], list[str], dict | None]:
+    """
+    User-facing function.
+
+    Pulls a list of read data out of an .h5 file containing processed read vectors, formatted
+    for read-by-read vector processing downstream use cases.
+
+    The flow of operation here is we load up the h5 file then loop through our regions and pick
+    out reads corresponding to our criteria. Criteria include chromosome, read starts and ends
+    (compared to region starts and ends), motif, and strand (if single_strand is True). The indices
+    for the desired reads are identified region-by-region, then all the reads for the region (or
+    the whole h5, if no region is passed) are loaded using the process_data function and put into
+    a list. The bytes are then decoded for the array entries, which are manually compressed because
+    h5py wasn't behaving.
+
+    There's some adjustment for the raw probability (no thresh) to match modkit extract outputs.
+    Specifically, the 0-255 8bit int has 0.5 added before dividing by 256, giving mod qualities
+    between 0.001953 and 0.99805 for bases in valid motifs. (Invalid positions have zeros.)
+
+    After this processing, we calculate modification fractions, sort, and return.
+
+    TODO: Implement progress bars and parallelization as with pileup loaders
+
+    Args:
+        file: Path to an hdf5 (.h5) file containing modification data for single reads,
+            stored in datasets read_name, chromosome, read_start,
+            read_end, base modification motif, mod_vector, and val_vector.
+        regions: Single or list of Path objects or strings. Path objects must point to .bed
+            files, strings can be .bed paths or region string in the format chrX:XXX-XXX.
+            All should all be regions for which your original .bam file had reads extracted,
+            although by design this method will not raise an error if any region contains
+            zero reads, as this may simply be a matter of low read depth.
+            If no regions are specified, the entire .h5 file will be returned. This may cause
+            memory issues.
+        motifs: types of modification to extract data for. Motifs are specified as
+            {DNA_sequence},{position_of_modification}. For example, a methylated adenine is specified
+            as 'A,0' and CpG methylation is specified as 'CG,0'.
+        single_strand: True means we only grab counts from reads from the same strand as
+            the region of interest, False means we always grab both strands within the regions
+        window_size: An optional parameter for creating centered windows for the provided regions.
+            If provided, all regions will be adjusted to be the same size and centered. If not provided,
+            all regions should already be the same size, or there should be only one.
+        sort_by: Read properties by which to sort, either one string or a list of strings. Options
+            include chromosome, region_start, region_end, read_start, read_end, and motif. More to
+            be added in future.
+        quiet: silences progress bars
+        cores: cores across which to parallelize processes
+        subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
+            reads to be returned. If not None, at least one of n or frac must be provided. The array
+            parameter should not be provided here.
+        chunk_size: region chunks for parallelized loading.
+
+    Returns:
+        a list of tuples, each tuple containing all datasets corresponding to an individual read that
+        was within the specified regions.
+        a list of strings, naming the datasets returned.
+        a regions_dict, containing lists of (region_start,region_end) coordinates by chromosome/contig.
+
+    TODO: The way the subsetting is implemented is confusing, in that you need to pass all but one of
+        the available parameters.
+    """
+    with h5py.File(file, "r") as h5:
+        datasets: list[str] = [
+            name for name, obj in h5.items() if isinstance(obj, h5py.Dataset)
+        ]
+        if "threshold" in h5:
+            # we are looking at an .h5 file with the new, much better compressed format that does
+            # not know the data type intrinsically for mod and val vectors, so we must check
+            readwise_datasets = [
+                dataset for dataset in datasets if dataset not in ["threshold"]
+            ]
+            compressed_binary_datasets = ["mod_vector", "val_vector"]
+            threshold_applied_to_h5 = h5["threshold"][()]
+            binarized = not np.isnan(threshold_applied_to_h5)
+        else:
+            # backwards compatible with the old h5 file structure
+            # If we remove backwards compatibility, beta test (Feb 2024) h5 extractions will not run
+            readwise_datasets = datasets
+            compressed_binary_datasets = []
+            binarized = True  # in this case all this will do is make it so we don't apply a +1/512 correction to the mod_vector
+
+    regions_dict = utils.regions_dict_from_input(
+        regions=regions,
+        window_size=window_size,
+    )
+    chunks_list = utils.process_chunks_from_regions_dict(
+        regions_dict, chunk_size=chunk_size
+    )
+
+    cores_to_run = utils.cores_to_run(cores)
+
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=cores_to_run,
+    ) as executor:
+        # Use functools.partial to pre-fill arguments
+        process_partial = partial(
+            read_tuples_process_chunk,
+            file=file,
+            motifs=motifs,
+            single_strand=single_strand,
+            subset_parameters=subset_parameters,
+            readwise_datasets=readwise_datasets,
+            compressed_binary_datasets=compressed_binary_datasets,
+            binarized=binarized,
+        )
+        read_tuples_raw = list(
+            chain.from_iterable(
+                tqdm(
+                    executor.map(process_partial, chunks_list),
+                    total=len(chunks_list),
+                    desc="Loading data",
+                    disable=quiet,
+                    leave=False,
+                )
+            )
+        )
+
+    #  We add region information (start, end, and strand; chromosome is already present!)
+    # so that it is possible to sort by and process based on these
+    readwise_datasets += ["region_start", "region_end", "region_strand"]
+
+    # This is sanitizing the dataset entries and adjusting prob values if needed
+    if binarized:
+        read_tuples_processed = [
+            convert_bytes_to_strings(tup) for tup in read_tuples_raw
+        ]
+    else:
+        read_tuples_processed = [
+            adjust_mod_probs_in_tuples(
+                convert_bytes_to_strings(tup),
+                readwise_datasets.index("mod_vector"),
+                readwise_datasets.index("val_vector"),
+            )
+            for tup in read_tuples_raw
+        ]
+
+    if calculate_mod_fractions:
+        # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
+        readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
+        # dict[read_name][motif]=modified fraction of motif in read, float
+        mod_fractions_by_read_name_by_motif: defaultdict[
+            str, defaultdict[str, float]
+        ] = defaultdict(lambda: defaultdict(lambda: 0.0))
+        for motif in motifs:
+            for read_tuple in read_tuples_processed:
+                if read_tuple[readwise_datasets.index("motif")] == motif:
+                    mod_sum = np.sum(read_tuple[readwise_datasets.index("mod_vector")])
+                    val_sum = np.sum(read_tuple[readwise_datasets.index("val_vector")])
+                    mod_fraction = mod_sum / val_sum if val_sum > 0 else 0
+                    mod_fractions_by_read_name_by_motif[
+                        read_tuple[readwise_datasets.index("read_name")]
+                    ][motif] = mod_fraction
+
+        read_tuples_all = []
+        for read_tuple in read_tuples_processed:
+            read_tuples_all.append(
+                tuple(val for val in read_tuple)
+                + tuple(
+                    mod_frac
+                    for mod_frac in mod_fractions_by_read_name_by_motif[
+                        read_tuple[readwise_datasets.index("read_name")]
+                    ].values()
+                )
+            )
+    else:
+        read_tuples_all = read_tuples_processed
+
+    ## Sort the reads
+
+    # Enforce that sort_by is a list
+    if not isinstance(sort_by, list):
+        sort_by = [sort_by]
+
+    # If 'shuffle' appears anywhere in sort_by, we first shuffle the list
+    if "shuffle" in sort_by:
+        utils.rng.shuffle(read_tuples_all)
+
+    try:
+        sort_by_indices = [
+            readwise_datasets.index(sort_item)
+            for sort_item in sort_by
+            if sort_item != "shuffle"
+        ]
+    except ValueError as e:
+        raise ValueError(
+            f"Sorting error. {e}. Datasets include {readwise_datasets}. If you need mod fraction sorting make sure you are not setting calculate_read_fraction to False."
+        ) from e
+
+    if len(sort_by_indices) > 0:
+        sorted_read_tuples = sorted(
+            read_tuples_all, key=lambda x: tuple(x[index] for index in sort_by_indices)
+        )
+    else:
+        sorted_read_tuples = read_tuples_all
+
+    return sorted_read_tuples, readwise_datasets, regions_dict
+
+
 """ TEMPORARY STUB VARS """
 STUB_HALFSIZE = 500
 STUB_N_READS = 500
@@ -1093,11 +1057,73 @@ def reads_from_fake(
     return reads, read_names, mods, {}
 
 
-# def convert_bytes(item):
-#     """Convert bytes to string if item is bytes, otherwise return as is."""
-#     if isinstance(item, bytes):
-#         return item.decode()
-#     return item
+def read_tuples_process_chunk(
+    chunk,
+    file,
+    motifs,
+    single_strand,
+    subset_parameters,
+    readwise_datasets,
+    compressed_binary_datasets,
+    binarized,
+):
+    chromosome = chunk["chromosome"]
+    region_start = chunk["region_start"]
+    region_end = chunk["region_end"]
+    subregion_start = chunk["subregion_start"]
+    subregion_end = chunk["subregion_end"]
+    strand = chunk["strand"]
+
+    last_subregion_in_region = subregion_end == region_end
+
+    with h5py.File(file, "r") as h5:
+        # Pre-load metadata so we can identify reads to pull from file
+        read_chromosomes = np.array(h5["chromosome"], dtype=str)
+        read_starts = np.array(h5["read_start"])
+        read_ends = np.array(h5["read_end"])
+        read_motifs = np.array(h5["motif"], dtype=str)
+        ref_strands = np.array(h5["strand"], dtype=str)
+
+        relevant_read_indices = np.flatnonzero(
+            (read_ends > subregion_start)
+            & (read_starts < subregion_end)
+            & np.isin(read_motifs, motifs)
+            & (read_chromosomes == chromosome)
+            & (
+                (not single_strand)
+                | (strand not in ["+", "-"])
+                | (ref_strands == strand)
+            )
+            # if this is the last subregion, take any reads with any overlap
+            # otherwise, take only reads that end within the subregion, because
+            # those that extend into the next will be grabbed there!
+            & (last_subregion_in_region | (read_ends <= subregion_end))
+        )
+        if subset_parameters is not None:
+            relevant_read_indices = np.sort(
+                utils.random_sample(relevant_read_indices, **subset_parameters)
+            )
+        read_tuples_raw = list(
+            zip(
+                *(
+                    retrieve_h5_data(
+                        h5=h5,
+                        dataset=dataset,
+                        indices=relevant_read_indices,
+                        compressed=dataset in compressed_binary_datasets,
+                        dtype=np.uint8,
+                        decompressor=gzip.decompress,
+                        binarized=binarized,
+                    )
+                    for dataset in readwise_datasets
+                ),
+                [region_start for _ in relevant_read_indices],
+                [region_end for _ in relevant_read_indices],
+                [strand for _ in relevant_read_indices],
+            )
+        )
+
+    return read_tuples_raw
 
 
 def convert_bytes_to_strings(tup):

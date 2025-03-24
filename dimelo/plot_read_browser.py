@@ -15,6 +15,8 @@ def plot_read_browser(
     single_strand: bool = False,
     sort_by: str | list[str] = "shuffle",
     hover: bool = True,
+    quiet: bool = False,
+    cores: int | None = None,
     subset_parameters: dict | None = None,
     **kwargs,
 ) -> plotly.graph_objs.Figure:
@@ -43,6 +45,8 @@ def plot_read_browser(
             more condensed visualization. Note that "collapse" is mutually exclusive with all other sorting options,
             and is only allowed to be passed as a single string option.
         hover: if False, disables display of information on mouse hover
+        quiet: disables progress bars
+        cores: CPU cores across which to parallelize processing. Default to None, which means all available.
         subset_parameters: Parameters to pass to the utils.random_sample() method, to subset the
             reads to be returned. If not None, at least one of n or frac must be provided.
 
@@ -68,6 +72,8 @@ def plot_read_browser(
         single_strand=single_strand,
         sort_by=sort_by,
         calculate_mod_fractions=False,
+        quiet=quiet,
+        cores=cores,
         subset_parameters=subset_parameters,
     )
 
