@@ -887,7 +887,7 @@ def read_vectors_from_hdf5(
             binarized = True  # in this case all this will do is make it so we don't apply a +1/512 correction to the mod_vector
 
         # Pre-load metadata so we can identify reads to pull from file
-        pbar = tqdm(total=5, desc="Loading indices", leave=False, disable=quiet)
+        pbar = tqdm(total=5, desc="Loading read metadata", leave=False, disable=quiet)
         read_chromosomes = np.array(h5["chromosome"], dtype=str)
         pbar.update(1)
         read_starts = np.array(h5["read_start"])
@@ -958,88 +958,23 @@ def read_vectors_from_hdf5(
         process_partial = partial(
             read_tuples_process_chunk,
             file=file,
+            motifs=motifs,
+            calculate_mod_fractions=calculate_mod_fractions,
             readwise_datasets=readwise_datasets,
             compressed_binary_datasets=compressed_binary_datasets,
             binarized=binarized,
         )
-        read_tuples_raw = list(
-            chain.from_iterable(
-                tqdm(
-                    executor.map(process_partial, read_index_chunks),
-                    total=len(read_index_chunks),
-                    desc="Loading data",
-                    disable=quiet,
-                    leave=False,
-                )
+        results = list(
+            tqdm(
+                executor.map(process_partial, read_index_chunks),
+                total=len(read_index_chunks),
+                desc="Loading data",
+                disable=quiet,
+                leave=False,
             )
         )
-
-    #  We add region information (start, end, and strand; chromosome is already present!)
-    # so that it is possible to sort by and process based on these
-    readwise_datasets += ["region_start", "region_end", "region_strand"]
-
-    # This is sanitizing the dataset entries and adjusting prob values if needed
-    if binarized:
-        read_tuples_processed = [
-            convert_bytes_to_strings(tup)
-            for tup in tqdm(
-                read_tuples_raw,
-                desc="Converting bytes to strings",
-                disable=quiet,
-                leave=False,
-            )
-        ]
-    else:
-        read_tuples_processed = [
-            adjust_mod_probs_in_tuples(
-                convert_bytes_to_strings(tup),
-                readwise_datasets.index("mod_vector"),
-                readwise_datasets.index("val_vector"),
-            )
-            for tup in tqdm(
-                read_tuples_raw, desc="Adjusting mod probs", disable=quiet, leave=False
-            )
-        ]
-
-    del read_tuples_raw
-
-    if calculate_mod_fractions:
-        # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
-        readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
-        # dict[read_name][motif]=modified fraction of motif in read, float
-        mod_fractions_by_read_name_by_motif: defaultdict[
-            str, defaultdict[str, float]
-        ] = defaultdict(lambda: defaultdict(lambda: 0.0))
-        for motif in motifs:
-            for read_tuple in tqdm(
-                read_tuples_processed,
-                desc=f"Calculating mod fractions for {motif}",
-                disable=quiet,
-                leave=False,
-            ):
-                if read_tuple[readwise_datasets.index("motif")] == motif:
-                    mod_sum = np.sum(read_tuple[readwise_datasets.index("mod_vector")])
-                    val_sum = np.sum(read_tuple[readwise_datasets.index("val_vector")])
-                    mod_fraction = mod_sum / val_sum if val_sum > 0 else 0
-                    mod_fractions_by_read_name_by_motif[
-                        read_tuple[readwise_datasets.index("read_name")]
-                    ][motif] = mod_fraction
-
-        read_tuples_all = []
-        for read_tuple in read_tuples_processed:
-            read_tuples_all.append(
-                tuple(val for val in read_tuple)
-                + tuple(
-                    mod_frac
-                    for mod_frac in mod_fractions_by_read_name_by_motif[
-                        read_tuple[readwise_datasets.index("read_name")]
-                    ].values()
-                )
-            )
-    else:
-        read_tuples_all = read_tuples_processed
-
-    del read_tuples_processed
+    read_tuples_all = list(chain.from_iterable(result[0] for result in results))
+    readwise_datasets = results[0][1]
 
     ## Sort the reads
 
@@ -1132,6 +1067,8 @@ def reads_from_fake(
 def read_tuples_process_chunk(
     read_index_chunk,
     file,
+    motifs,
+    calculate_mod_fractions,
     readwise_datasets,
     compressed_binary_datasets,
     binarized,
@@ -1157,7 +1094,57 @@ def read_tuples_process_chunk(
             )
         )
 
-    return read_tuples_raw
+    #  We add region information (start, end, and strand; chromosome is already present!)
+    # so that it is possible to sort by and process based on these
+    readwise_datasets += ["region_start", "region_end", "region_strand"]
+
+    # This is sanitizing the dataset entries and adjusting prob values if needed
+    if binarized:
+        read_tuples_processed = [
+            convert_bytes_to_strings(tup) for tup in read_tuples_raw
+        ]
+    else:
+        read_tuples_processed = [
+            adjust_mod_probs_in_tuples(
+                convert_bytes_to_strings(tup),
+                readwise_datasets.index("mod_vector"),
+                readwise_datasets.index("val_vector"),
+            )
+            for tup in read_tuples_raw
+        ]
+
+    if calculate_mod_fractions:
+        # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
+        readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
+        # dict[read_name][motif]=modified fraction of motif in read, float
+        mod_fractions_by_read_name_by_motif: defaultdict[
+            str, defaultdict[str, float]
+        ] = defaultdict(lambda: defaultdict(lambda: 0.0))
+        for motif in motifs:
+            for read_tuple in read_tuples_processed:
+                if read_tuple[readwise_datasets.index("motif")] == motif:
+                    mod_sum = np.sum(read_tuple[readwise_datasets.index("mod_vector")])
+                    val_sum = np.sum(read_tuple[readwise_datasets.index("val_vector")])
+                    mod_fraction = mod_sum / val_sum if val_sum > 0 else 0
+                    mod_fractions_by_read_name_by_motif[
+                        read_tuple[readwise_datasets.index("read_name")]
+                    ][motif] = mod_fraction
+
+        read_tuples_all = []
+        for read_tuple in read_tuples_processed:
+            read_tuples_all.append(
+                tuple(val for val in read_tuple)
+                + tuple(
+                    mod_frac
+                    for mod_frac in mod_fractions_by_read_name_by_motif[
+                        read_tuple[readwise_datasets.index("read_name")]
+                    ].values()
+                )
+            )
+    else:
+        read_tuples_all = read_tuples_processed
+
+    return read_tuples_all, readwise_datasets
 
 
 def convert_bytes_to_strings(tup):
