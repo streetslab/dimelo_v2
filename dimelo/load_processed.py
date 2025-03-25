@@ -900,11 +900,13 @@ def read_vectors_from_hdf5(
         pbar.update(1)
         pbar.close()
 
+    # we first identify which reads line up with the specified regions, and then send those to workers
     regions_dict = utils.regions_dict_from_input(
         regions=regions,
         window_size=window_size,
     )
-    relevant_read_indices = []
+    relevant_read_tuples = []
+    # we can check motifs regardless of chromosome
     motifs_mask = np.isin(read_motifs, motifs)
     for chrom, region_list in tqdm(
         regions_dict.items(),
@@ -912,10 +914,11 @@ def read_vectors_from_hdf5(
         leave=False,
         disable=quiet,
     ):
+        # for subsequent lookups it is much faster if we subset to only possible candidates i.e. correct motif and chromosome
         chromosome_motif_mask = (read_chromosomes == chrom) & motifs_mask
         cm_indices = np.flatnonzero(chromosome_motif_mask)
         for region_start, region_end, region_strand in region_list:
-            # Each of these is a Boolean array of the same length ~1 million
+            # for each individual region we can check against the read start and ends
             subset_read_ends = read_ends[cm_indices]
             subset_read_starts = read_starts[cm_indices]
             read_span_mask = (subset_read_ends > region_start) & (
@@ -924,7 +927,7 @@ def read_vectors_from_hdf5(
 
             # This last condition might not even apply if single_strand=False or if the region_strand is not +/-,
             # so handle that logically outside to skip it entirely when possible:
-            if single_strand and region_strand in ["+", "-"]:
+            if single_strand and (region_strand in ["+", "-"]):
                 subset_ref_strands = ref_strands[cm_indices]
                 strand_mask = subset_ref_strands == region_strand
                 final_mask = read_span_mask & strand_mask
@@ -938,23 +941,42 @@ def read_vectors_from_hdf5(
                 region_read_indices = np.sort(
                     utils.random_sample(region_read_indices, **subset_parameters)
                 )
-            relevant_read_indices.extend([int(index) for index in region_read_indices])
+            for index in region_read_indices:
+                relevant_read_tuples.append(
+                    (region_start, region_end, region_strand, int(index))
+                )
 
-    read_index_chunks = [
-        np.array(sorted(list(set(relevant_read_indices[i : i + chunk_size]))))
-        for i in range(
-            0,
-            len(relevant_read_indices),
-            chunk_size,
+    # we unfortunately need to filter to unique indices because otherwise h5py throws and error
+    # this is a change in behavior from pre-parallelization, and when we move to tabix-driven read
+    # loading, the behavior will revert. This does *not* impact tests because the single read test
+    # only checks the first read
+    unique_tuples = {}
+    for tup in relevant_read_tuples:
+        # tup is (region_start, region_end, region_strand, read_index)
+        if tup[3] not in unique_tuples:
+            unique_tuples[tup[3]] = tup
+
+    # reads need to be sorted by index, again to avoid h5py complaints
+    unique_tuples_sorted = sorted(unique_tuples.values(), key=lambda x: x[3])
+
+    # each chunk needs the region metadata so that can be placed into the return tuples
+    chunked_tuples = []
+    for i in range(0, len(unique_tuples_sorted), chunk_size):
+        chunk = unique_tuples_sorted[i : i + chunk_size]
+        region_start_list = [t[0] for t in chunk]
+        region_end_list = [t[1] for t in chunk]
+        region_strand_list = [t[2] for t in chunk]
+        read_index_list = [t[3] for t in chunk]
+        chunked_tuples.append(
+            (region_start_list, region_end_list, region_strand_list, read_index_list)
         )
-    ]
 
     cores_to_run = utils.cores_to_run(cores)
 
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=cores_to_run,
     ) as executor:
-        # Use functools.partial to pre-fill arguments
+        # Pre-fill kwargs
         process_partial = partial(
             read_tuples_process_chunk,
             file=file,
@@ -966,15 +988,48 @@ def read_vectors_from_hdf5(
         )
         results = list(
             tqdm(
-                executor.map(process_partial, read_index_chunks),
-                total=len(read_index_chunks),
+                executor.map(process_partial, chunked_tuples),
+                total=len(chunked_tuples),
                 desc="Loading data",
                 disable=quiet,
                 leave=False,
             )
         )
-    read_tuples_all = list(chain.from_iterable(result[0] for result in results))
+    read_tuples_processed = list(chain.from_iterable(result[0] for result in results))
+    # readwise_datasets is modified within read_tuples_process_chunk: region info is added
     readwise_datasets = results[0][1]
+    list_of_mod_fractions_by_read_name_by_motif = list(result[2] for result in results)
+
+    if calculate_mod_fractions:
+        # mod fractions are calculated in parallel but must be combined and mapped externally, because the logic
+        # of the combination requires that all reads X all motifs be present in one dictionary
+        mod_fractions_by_read_name_by_motif = defaultdict(
+            lambda: {motif: 0.0 for motif in motifs}
+        )
+        for (
+            chunk_mod_fractions_by_read_name_by_motif
+        ) in list_of_mod_fractions_by_read_name_by_motif:
+            for (
+                read_name,
+                motif_mapping,
+            ) in chunk_mod_fractions_by_read_name_by_motif.items():
+                for motif, mod_fraction in motif_mapping.items():
+                    mod_fractions_by_read_name_by_motif[read_name][motif] = mod_fraction
+        # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
+        readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
+        read_tuples_all = []
+        for read_tuple in read_tuples_processed:
+            read_tuples_all.append(
+                tuple(val for val in read_tuple)
+                + tuple(
+                    mod_frac
+                    for mod_frac in mod_fractions_by_read_name_by_motif[
+                        read_tuple[readwise_datasets.index("read_name")]
+                    ].values()
+                )
+            )
+    else:
+        read_tuples_all = read_tuples_processed
 
     ## Sort the reads
 
@@ -1003,8 +1058,6 @@ def read_vectors_from_hdf5(
         )
     else:
         sorted_read_tuples = read_tuples_all
-
-    del read_tuples_all
 
     return sorted_read_tuples, readwise_datasets, regions_dict
 
@@ -1065,7 +1118,7 @@ def reads_from_fake(
 
 
 def read_tuples_process_chunk(
-    read_index_chunk,
+    chunked_tuples,
     file,
     motifs,
     calculate_mod_fractions,
@@ -1073,6 +1126,10 @@ def read_tuples_process_chunk(
     compressed_binary_datasets,
     binarized,
 ):
+    region_starts_list = chunked_tuples[0]
+    region_ends_list = chunked_tuples[1]
+    region_strands_list = chunked_tuples[2]
+    read_index_chunk = chunked_tuples[3]
     with h5py.File(file, "r") as h5:
         read_tuples_raw = list(
             zip(
@@ -1088,9 +1145,9 @@ def read_tuples_process_chunk(
                     )
                     for dataset in readwise_datasets
                 ),
-                ["region_start" for _ in read_index_chunk],
-                ["region_end" for _ in read_index_chunk],
-                ["strand" for _ in read_index_chunk],
+                region_starts_list,
+                region_ends_list,
+                region_strands_list,
             )
         )
 
@@ -1113,13 +1170,12 @@ def read_tuples_process_chunk(
             for tup in read_tuples_raw
         ]
 
+    # dict[read_name][motif]=modified fraction of motif in read, float
+    mod_fractions_by_read_name_by_motif: defaultdict[str, defaultdict[str, float]] = (
+        defaultdict(lambda: defaultdict(lambda: 0.0))
+    )
+
     if calculate_mod_fractions:
-        # Add the MOTIF_mod_fraction entries to the readwise_datasets list for future reference in sorting
-        readwise_datasets += [f"{motif}_mod_fraction" for motif in motifs]
-        # dict[read_name][motif]=modified fraction of motif in read, float
-        mod_fractions_by_read_name_by_motif: defaultdict[
-            str, defaultdict[str, float]
-        ] = defaultdict(lambda: defaultdict(lambda: 0.0))
         for motif in motifs:
             for read_tuple in read_tuples_processed:
                 if read_tuple[readwise_datasets.index("motif")] == motif:
@@ -1130,21 +1186,12 @@ def read_tuples_process_chunk(
                         read_tuple[readwise_datasets.index("read_name")]
                     ][motif] = mod_fraction
 
-        read_tuples_all = []
-        for read_tuple in read_tuples_processed:
-            read_tuples_all.append(
-                tuple(val for val in read_tuple)
-                + tuple(
-                    mod_frac
-                    for mod_frac in mod_fractions_by_read_name_by_motif[
-                        read_tuple[readwise_datasets.index("read_name")]
-                    ].values()
-                )
-            )
-    else:
-        read_tuples_all = read_tuples_processed
+    normal_fractions_dict = {
+        read: dict(motifs)
+        for read, motifs in mod_fractions_by_read_name_by_motif.items()
+    }
 
-    return read_tuples_all, readwise_datasets
+    return read_tuples_processed, readwise_datasets, normal_fractions_dict
 
 
 def convert_bytes_to_strings(tup):
