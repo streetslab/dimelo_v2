@@ -1,3 +1,6 @@
+# NO LONGER BEING UPDATED
+This forked version of the dimelo repository is no longer being updated as of June 10, 2025. Please see the main branch, https://github.com/streetslab/dimelo/, for new updates
+
 # dimelo
 ## Introduction
 
